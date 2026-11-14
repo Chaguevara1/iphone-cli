@@ -6,6 +6,10 @@ Built on the principle of [Poki](https://github.com/JosssphZhou/poki). No Poki c
 
 한국어: [README.ko.md](README.ko.md)
 
+> **Requires a real iPhone running iOS 27 or later** (macOS or Windows, over USB or Wi-Fi). Simulators and iOS 26 or earlier are not supported.
+
+![iphone-cli demo](docs/demo.gif)
+
 ```console
 $ iph read --human
 Settings  430x932  15 elements

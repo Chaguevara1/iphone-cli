@@ -6,6 +6,10 @@ AI 에이전트가 **실제 아이폰**의 아무 앱이나 화면 요소(접근
 
 English: [README.md](README.md)
 
+> **실제 아이폰(iOS 27 이상)** 이 필요합니다 (macOS · Windows, USB 또는 Wi-Fi). 시뮬레이터와 iOS 26 이하는 지원하지 않습니다.
+
+![iphone-cli 데모](docs/demo.gif)
+
 ```console
 $ iph read --human
 설정  430x932  15 elements
