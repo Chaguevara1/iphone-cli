@@ -1,14 +1,19 @@
 # iphone-cli (`iph`)
 
-AI 에이전트가 **실제 아이폰**의 아무 앱이나 화면 요소(접근성 트리)로 읽고 누르게 해 주는 CLI + MCP 서버입니다. XCUITest · WebDriverAgent · Xcode 서명 없이, Xcode가 쓰는 애플 개발자 서비스에 직접 붙습니다. 자주 하는 순서는 **스크립트**(자바스크립트)로 적어 AI 왕복 없이 한 번에 실행합니다.
+**AI 에이전트가 실제 아이폰의 아무 앱이나 터미널에서 읽고 조작할 수 있는 CLI & MCP 서버.**
 
-[Poki](https://github.com/JosssphZhou/poki)의 원리를 따라 만들었습니다. 코드는 가져오지 않았고, Poki 문서에 적힌 동작 원리와 직접 실험한 결과로 새로 썼습니다. 기기 통신은 [idevice](https://github.com/jkcoxson/idevice)(MIT)에 기대고 있습니다.
+**No Xcode. No WebDriverAgent. No app installed on the phone.**
+
+- **Xcode · 서명 · 폰 앱 설치 없음** — USB 또는 Wi-Fi로 애플 개발자 서비스(접근성 · HID)에 직접 붙습니다
+- **스크린샷 추론 대신 접근성 트리** — 화면 구조를 바로 읽고, 자주 쓰는 흐름은 내장 QuickJS 엔진(`iph script`)으로 AI 왕복 없이 한 번에 실행합니다
+- **에이전트 친화 설계** — CLI + MCP 서버(`iph mcp`)와 재시도 판단이 가능한 결과 상태(`done` / `not_sent` / `unknown`)를 제공합니다
+- **macOS · Windows 지원** — 단일 바이너리로 바로 설치, **실제 아이폰(iOS 27 이상)** 에서 동작합니다
 
 English: [README.md](README.md)
 
-> **실제 아이폰(iOS 27 이상)** 이 필요합니다 (macOS · Windows, USB 또는 Wi-Fi). 시뮬레이터와 iOS 26 이하는 지원하지 않습니다.
-
 ![iphone-cli 데모](docs/demo.gif)
+
+[Poki](https://github.com/JosssphZhou/poki)의 원리를 따라 만들었습니다(코드는 가져오지 않고 문서와 기기 실험을 바탕으로 새로 구현). 기기 통신은 [idevice](https://github.com/jkcoxson/idevice)(MIT)를 사용합니다.
 
 ```console
 $ iph read --human

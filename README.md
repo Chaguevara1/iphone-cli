@@ -1,14 +1,19 @@
 # iphone-cli (`iph`)
 
-A CLI and MCP server that lets AI agents read and operate any app on a **real iPhone** through its accessibility tree. No XCUITest, no WebDriverAgent, no Xcode signing: it talks directly to the Apple developer services Xcode itself uses. Sequences you run often become **scripts** (JavaScript) that execute in one call, without a round trip to the model between steps.
+**Let AI agents read and operate any app on a real iPhone — straight from your terminal.**
 
-Built on the principle of [Poki](https://github.com/JosssphZhou/poki). No Poki code is used; this is a new implementation from the behaviour Poki's documentation describes and from experiments on a device. Device communication relies on [idevice](https://github.com/jkcoxson/idevice) (MIT).
+**No Xcode. No WebDriverAgent. No app installed on the phone.**
+
+- **Direct Apple developer services** — connects over USB or Wi-Fi to the same accessibility and HID services Xcode uses, with no signing or test runner
+- **Accessibility tree, not screenshots** — reads structured UI elements cleanly, and runs multi-step flows in one call with a built-in QuickJS engine (`iph script`)
+- **Agent-ready** — CLI + MCP server (`iph mcp`) + safety-first outcomes (`done` / `not_sent` / `unknown`)
+- **macOS & Windows** — single-binary install, requires a real iPhone on **iOS 27+**
 
 한국어: [README.ko.md](README.ko.md)
 
-> **Requires a real iPhone running iOS 27 or later** (macOS or Windows, over USB or Wi-Fi). Simulators and iOS 26 or earlier are not supported.
-
 ![iphone-cli demo](docs/demo.gif)
+
+Built on the principle of [Poki](https://github.com/JosssphZhou/poki) (a new implementation from its documented behaviour and device experiments, with no Poki code). Device communication relies on [idevice](https://github.com/jkcoxson/idevice) (MIT).
 
 ```console
 $ iph read --human
