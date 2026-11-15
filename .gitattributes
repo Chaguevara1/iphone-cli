@@ -1,2 +1,2 @@
-install.sh linguist-vendored
-scripts/*.js linguist-documentation
+install.sh linguist-detectable=false
+scripts/** linguist-detectable=false
