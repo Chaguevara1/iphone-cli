@@ -2,12 +2,12 @@
 
 **Let AI agents read and operate any app on a real iPhone — straight from your terminal.**
 
-**No Xcode. No WebDriverAgent. No app installed on the phone.**
+**No Xcode. No WebDriverAgent. No app installed on the phone. 100% Rust.**
 
 - **Direct Apple developer services** — connects over USB or Wi-Fi to the same accessibility and HID services Xcode uses, with no signing or test runner
 - **Accessibility tree, not screenshots** — reads structured UI elements cleanly, and runs multi-step flows in one call with a built-in QuickJS engine (`iph script`)
 - **Agent-ready** — CLI + MCP server (`iph mcp`) + safety-first outcomes (`done` / `not_sent` / `unknown`)
-- **macOS & Windows** — single-binary install, requires a real iPhone on **iOS 27+**
+- **Single native binary (macOS & Windows)** — no Python, Node.js, or Appium runtime; install one binary and target a real iPhone on **iOS 27+**
 
 한국어: [README.ko.md](README.ko.md)
 

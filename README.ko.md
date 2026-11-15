@@ -2,12 +2,12 @@
 
 **AI 에이전트가 실제 아이폰의 아무 앱이나 터미널에서 읽고 조작할 수 있는 CLI & MCP 서버.**
 
-**No Xcode. No WebDriverAgent. No app installed on the phone.**
+**No Xcode. No WebDriverAgent. No app installed on the phone. 100% Rust.**
 
 - **Xcode · 서명 · 폰 앱 설치 없음** — USB 또는 Wi-Fi로 애플 개발자 서비스(접근성 · HID)에 직접 붙습니다
 - **스크린샷 추론 대신 접근성 트리** — 화면 구조를 바로 읽고, 자주 쓰는 흐름은 내장 QuickJS 엔진(`iph script`)으로 AI 왕복 없이 한 번에 실행합니다
 - **에이전트 친화 설계** — CLI + MCP 서버(`iph mcp`)와 재시도 판단이 가능한 결과 상태(`done` / `not_sent` / `unknown`)를 제공합니다
-- **macOS · Windows 지원** — 단일 바이너리로 바로 설치, **실제 아이폰(iOS 27 이상)** 에서 동작합니다
+- **단일 네이티브 바이너리 (macOS · Windows)** — Python · Node.js · Appium 런타임 없이 바로 설치하고, **실제 아이폰(iOS 27 이상)** 에서 동작합니다
 
 English: [README.md](README.md)
 
