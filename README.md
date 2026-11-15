@@ -87,7 +87,7 @@ cargo install --path .        # ~/.cargo/bin/iph
 | `auto_lock` | recommended | Auto-Lock → Never for long sessions |
 | `do_not_disturb` | info | Shown only while Do Not Disturb from `iph dnd on` is still on |
 
-Which checks proved truly required, and what could not be verified, is in [docs/onboarding.md](docs/onboarding.md) (Korean).
+Setup requirements and how to interpret the checks are in [docs/onboarding.md](docs/onboarding.md) (Korean).
 
 ### Wi-Fi setup and troubleshooting
 
@@ -300,8 +300,7 @@ A reading takes more than a second because of the phone: after a request it wait
 - Verified on one device. Other iOS versions may number the accessibility attributes differently (check with `iph read --raw`).
 - Apps whose screen keeps moving (animations, video) take longer to read.
 - Notification banners and system pop-ups are not in the app's tree. `iph dnd on` keeps most banners away, but not what comes through Do Not Disturb.
-- Once, a new input session took no touch at all (cause unknown, one session in about a dozen). `iph dnd` notices this when its pull on Control Center does nothing, and tries again on a new session.
-- **There are stretches when the phone answers slowly.** On the morning of 2026-11-11 this happened four times in two hours (from a few minutes to 40): readings took 2 to 30 s or timed out, and input connections dropped. Once the Mac's CPU was fully used by other work; the cause of the others is unknown (often right after the resident process had been stopped and started several times in a row). In such a stretch a late reading of an earlier screen can be acted on: switching Do Not Disturb failed, Control Center was left open, or the app was left for the home screen. `iph stop`, a minute's wait and a new start brought it back. The record is in [docs/how-it-works.md](docs/how-it-works.md), section 7 (Korean).
+- The screen-reading service can stop answering. iph attempts a restart at most every two minutes, except when the last screen was a system panel or a previous restart did not help. If Control Center cannot be read while recording, close it with `iph button home` or bring an app up with `iph launch`, then read again. See [recovery behavior](docs/how-it-works.md#6-연결과-화면-읽기-복구) (Korean).
 - Portrait only.
 - `iph apps` shows the names the phone reports (usually English). Launch by bundle id to be sure.
 - `iph type` puts back the clipboard's text (or one image). **Content copied in an app (text from Notes, which comes with formatting) is not put back.** Reading it from the computer stalls the phone's clipboard for about a minute, so it is left unread and the clipboard is emptied after typing. The result says `clipboard_restored: false` with a `clipboard_note`.
