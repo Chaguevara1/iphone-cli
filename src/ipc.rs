@@ -50,10 +50,14 @@ mod imp {
 
 #[cfg(windows)]
 mod imp {
-    use std::time::Duration;
+    use std::{ffi::c_void, time::Duration};
 
     use anyhow::{Context, Result};
     use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
+    use windows_sys::Win32::Security::{
+        Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1},
+        PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+    };
 
     use super::Stream;
 
@@ -76,26 +80,80 @@ mod imp {
         Err(std::io::Error::other("the daemon's pipe stayed busy"))
     }
 
+    /// Full access for the pipe's owner, SYSTEM and Administrators only; the
+    /// default DACL would also let Everyone and Anonymous open it for reading.
+    const PIPE_SDDL: &str = "D:P(A;;GA;;;OW)(A;;GA;;;SY)(A;;GA;;;BA)";
+
+    /// A security descriptor built once in `bind` and never freed.
+    struct Descriptor(PSECURITY_DESCRIPTOR);
+
+    // SAFETY: the pointer refers to a self-relative descriptor that is
+    // allocated once, intentionally leaked (never `LocalFree`d) and never
+    // written after creation; Windows only reads it when a pipe instance is
+    // created. Sharing it between threads is therefore sound.
+    unsafe impl Send for Descriptor {}
+    unsafe impl Sync for Descriptor {}
+
+    fn owner_only_descriptor() -> Option<Descriptor> {
+        let sddl: Vec<u16> = PIPE_SDDL.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        // SAFETY: `sddl` is NUL-terminated UTF-16 that outlives the call, `sd`
+        // is a valid out pointer, and the size out pointer is optional.
+        let ok = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut sd,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 || sd.is_null() {
+            tracing::warn!(
+                "pipe security descriptor: {}; using the default",
+                std::io::Error::last_os_error()
+            );
+            return None;
+        }
+        Some(Descriptor(sd))
+    }
+
+    /// Create one pipe instance, owner-only when the descriptor exists.
+    fn create(options: &ServerOptions, name: &str, sd: Option<&Descriptor>) -> std::io::Result<NamedPipeServer> {
+        let Some(sd) = sd else {
+            return options.create(name);
+        };
+        let mut attrs = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd.0,
+            bInheritHandle: 0,
+        };
+        // SAFETY: `attrs` is a valid SECURITY_ATTRIBUTES that lives for the
+        // whole call, and its descriptor is valid and never freed.
+        unsafe { options.create_with_security_attributes_raw(name, &mut attrs as *mut SECURITY_ATTRIBUTES as *mut c_void) }
+    }
+
     pub struct Listener {
         name: String,
         next: NamedPipeServer,
+        sd: Option<Descriptor>,
     }
 
     impl Listener {
         pub fn bind(udid: &str) -> Result<Self> {
             let name = name(udid);
+            let sd = owner_only_descriptor();
             // First instance only: a second daemon for the same phone fails here.
-            let next = ServerOptions::new()
-                .first_pipe_instance(true)
-                .reject_remote_clients(true)
-                .create(&name)
-                .with_context(|| format!("create {name}"))?;
-            Ok(Self { name, next })
+            let mut options = ServerOptions::new();
+            options.first_pipe_instance(true).reject_remote_clients(true);
+            let next = create(&options, &name, sd.as_ref()).with_context(|| format!("create {name}"))?;
+            Ok(Self { name, next, sd })
         }
 
         pub async fn accept(&mut self) -> std::io::Result<Stream> {
             self.next.connect().await?;
-            let fresh = ServerOptions::new().reject_remote_clients(true).create(&self.name)?;
+            let mut options = ServerOptions::new();
+            options.reject_remote_clients(true);
+            let fresh = create(&options, &self.name, self.sd.as_ref())?;
             Ok(Box::new(std::mem::replace(&mut self.next, fresh)))
         }
     }

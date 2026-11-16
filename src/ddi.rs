@@ -52,6 +52,17 @@ fn cache_ok(dir: &Path) -> bool {
         .all(|(name, sum)| sha256_of(&dir.join(name)).is_ok_and(|s| s == *sum))
 }
 
+/// The system's curl by full path, so a same-named program earlier on PATH is
+/// not run instead. Bare `curl` only when that file is missing; the SHA-256
+/// check still guards what it downloads.
+fn curl() -> PathBuf {
+    #[cfg(windows)]
+    let system = paths::system32("curl.exe");
+    #[cfg(not(windows))]
+    let system = PathBuf::from("/usr/bin/curl");
+    if system.is_file() { system } else { PathBuf::from("curl") }
+}
+
 /// The fetched image's folder, fetching it first when it is missing or does
 /// not match. Uses the system's `curl` (macOS, and Windows 10 and later).
 pub async fn fetched() -> Result<PathBuf> {
@@ -67,8 +78,8 @@ pub async fn fetched() -> Result<PathBuf> {
         }
         let url = format!("https://raw.githubusercontent.com/doronz88/DeveloperDiskImage/{REPO_COMMIT}/{REPO_DIR}/{name}");
         let partial = dir.join(format!("{name}.part"));
-        let status = tokio::process::Command::new("curl")
-            .args(["-fsSL", "--retry", "2", "-o"])
+        let status = tokio::process::Command::new(curl())
+            .args(["-fsSL", "--proto", "=https", "--proto-redir", "=https", "--retry", "2", "-o"])
             .arg(&partial)
             .arg(&url)
             .status()

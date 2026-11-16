@@ -69,6 +69,18 @@ pub fn personal_scripts() -> PathBuf {
     config_dir().join("scripts")
 }
 
+/// A Windows system program by full path (`%SystemRoot%\System32\<exe>`), so
+/// a same-named program earlier on PATH is never run instead.
+#[cfg(windows)]
+pub fn system32(exe: &str) -> PathBuf {
+    std::env::var_os("SystemRoot")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("System32")
+        .join(exe)
+}
+
 /// Create a directory only the user can enter. On Windows the folders under
 /// the user's profile are private already.
 pub fn ensure_private_dir(dir: &std::path::Path) -> std::io::Result<()> {
@@ -91,4 +103,17 @@ pub fn private_file() -> std::fs::OpenOptions {
         options.mode(0o600);
     }
     options
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn system_programs_resolve_inside_system32() {
+        let reg = super::system32("reg.exe");
+        assert!(reg.is_absolute(), "{}", reg.display());
+        assert!(reg.ends_with(r"System32\reg.exe"), "{}", reg.display());
+        // Every Windows install has reg.exe there.
+        assert!(reg.is_file(), "{}", reg.display());
+    }
 }
