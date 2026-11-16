@@ -15,7 +15,8 @@ fn detect() -> Lang {
     }
     // The system language list is the truth on macOS; the shell's LANG often
     // stays en_US on a Korean Mac.
-    if let Ok(out) = std::process::Command::new("defaults")
+    #[cfg(target_os = "macos")]
+    if let Ok(out) = std::process::Command::new("/usr/bin/defaults")
         .args(["read", "-g", "AppleLanguages"])
         .output()
     {
@@ -30,7 +31,7 @@ fn detect() -> Lang {
     }
     // Windows: the user's locale in the registry, e.g. "ko-KR".
     #[cfg(windows)]
-    if let Ok(out) = std::process::Command::new("reg")
+    if let Ok(out) = std::process::Command::new(crate::paths::system32("reg.exe"))
         .args(["query", r"HKCU\Control Panel\International", "/v", "LocaleName"])
         .output()
         && let Some(name) = String::from_utf8_lossy(&out.stdout).split_whitespace().last()

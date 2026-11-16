@@ -250,7 +250,7 @@ fn kill_pid(pid: i32) {
 
 #[cfg(windows)]
 fn kill_pid(pid: i32) {
-    let _ = std::process::Command::new("taskkill")
+    let _ = std::process::Command::new(paths::system32("taskkill.exe"))
         .args(["/F", "/PID", &pid.to_string()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
