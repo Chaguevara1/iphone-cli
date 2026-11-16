@@ -41,14 +41,14 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo test --locked ${{ matrix.profile }} 2>&1 | tee test.log
+          cargo test --locked --no-fail-fast ${{ matrix.profile }} 2>&1 | tee test.log
       - name: Publish failure details as annotations
         # Downloading job logs needs admin rights, but check-run annotations
         # are public, so compile errors and failing tests can be read there.
         if: failure()
         shell: bash
         run: |
-          grep -n -E -A 12 '^error(\[|:)|panicked at|^---- .* stdout ----|^failures:|test result: FAILED|could not compile' test.log > details.log || true
+          grep -n -E -A 12 '^error(\[|:)|panicked at|overflowed its stack|fatal runtime error|^---- .* stdout ----|^failures:|test result: FAILED|could not compile' test.log > details.log || true
           [ -s details.log ] || tail -n 200 test.log > details.log
           split -b 3500 -a 1 details.log chunk.
           n=0
