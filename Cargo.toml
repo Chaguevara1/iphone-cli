@@ -55,7 +55,15 @@ rand = "0.9"
 tokio = { version = "1", features = ["test-util"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Console",
+  # Owner-only security descriptor for the daemon's named pipe.
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  # The guard's confirmation dialog (MessageBoxW).
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [profile.release]
 opt-level = 3

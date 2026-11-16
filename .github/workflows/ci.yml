@@ -28,9 +28,40 @@ jobs:
             profile: ""
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    env:
+      RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - run: rustc --version && cargo --version
-      - run: cargo test --locked ${{ matrix.profile }}
+      - name: cargo test
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked ${{ matrix.profile }} 2>&1 | tee test.log
+      - name: Publish failure details as annotations
+        # Downloading job logs needs admin rights, but check-run annotations
+        # are public, so compile errors and failing tests can be read there.
+        if: failure()
+        shell: bash
+        run: |
+          grep -n -E -A 12 '^error(\[|:)|panicked at|^---- .* stdout ----|^failures:|test result: FAILED|could not compile' test.log > details.log || true
+          [ -s details.log ] || tail -n 200 test.log > details.log
+          split -b 3500 -a 1 details.log chunk.
+          n=0
+          for f in chunk.*; do
+            n=$((n+1)); [ "$n" -gt 9 ] && break
+            body=$(sed -e 's/%/%25/g' -e 's/\r//g' "$f" | awk 'BEGIN { ORS = "%0A" } { print }')
+            echo "::error title=cargo test failure ${n} (${{ matrix.os }})::${body}"
+          done
+      # A Windows build of the hardened branch, for use without a Rust toolchain.
+      - name: Build Windows binary
+        if: matrix.os == 'windows-latest' && (github.ref == 'refs/heads/security-hardening' || github.ref == 'refs/heads/main')
+        run: cargo build --locked --release
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'windows-latest' && (github.ref == 'refs/heads/security-hardening' || github.ref == 'refs/heads/main')
+        with:
+          name: iph-windows-x86_64
+          path: target/release/iph.exe
+          retention-days: 14
