@@ -142,10 +142,19 @@ pub struct Session {
     system_in_front: bool,
     /// Do Not Disturb: whether it is on for this session and what to put back.
     pub dnd: crate::dnd::State,
+    /// The guard's rules, from `[guard]` when the session was made.
+    pub guard_rules: crate::guard::Rules,
+    /// Who answers the guard's questions (a dialog; scripted in tests).
+    pub confirmer: crate::guard::Confirmer,
+    /// What the guard remembers between actions.
+    pub guard_state: crate::guard::State,
+    /// Set while iph runs its own fixed actions (`iph doctor`); the daemon
+    /// clears it after every request.
+    pub guard_suspended: bool,
 }
 
 /// A file URL or path as a plain path without a trailing slash.
-fn plain_path(s: &str) -> String {
+pub(crate) fn plain_path(s: &str) -> String {
     let s = s.strip_prefix("file://").unwrap_or(s);
     let raw = s.as_bytes();
     let mut bytes = Vec::with_capacity(raw.len());
@@ -203,9 +212,14 @@ async fn bounded<T, E: std::fmt::Debug>(
 impl Session {
     pub fn new(udid: String, config: Config) -> Self {
         let dnd = crate::dnd::State::load(&udid);
+        let guard_rules = crate::guard::Rules::new(&config.guard);
         Self {
             udid,
             config,
+            guard_rules,
+            confirmer: crate::guard::Confirmer::Dialog,
+            guard_state: crate::guard::State::default(),
+            guard_suspended: false,
             tunnel: None,
             ax: None,
             input: None,
@@ -268,6 +282,8 @@ impl Session {
             self.abandoned.push((input, tunnel));
         }
         self.ax = None;
+        // A new connection may mean another phone state: pids are not kept.
+        self.guard_state.bundles.clear();
     }
 
     /// Tell the phone to stop the streams of abandoned input sessions. Left

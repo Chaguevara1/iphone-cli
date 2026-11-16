@@ -16,6 +16,9 @@ pub enum Outcome {
     NotSent,
     /// Input may have reached the phone. Look at the screen; do not resend.
     Unknown,
+    /// Refused by the guard. Nothing was sent; do not retry or work around
+    /// it, tell the user.
+    Blocked,
 }
 
 impl Outcome {
@@ -24,6 +27,7 @@ impl Outcome {
             Outcome::Done => "done",
             Outcome::NotSent => "not_sent",
             Outcome::Unknown => "unknown",
+            Outcome::Blocked => "blocked",
         }
     }
 }
@@ -58,6 +62,10 @@ impl Fail {
 
     pub fn unknown(code: &str, message: impl Into<String>) -> Self {
         Self::new(Outcome::Unknown, code, message)
+    }
+
+    pub fn blocked(code: &str, message: impl Into<String>) -> Self {
+        Self::new(Outcome::Blocked, code, message)
     }
 
     pub fn invalid(message: impl Into<String>) -> Self {
@@ -149,5 +157,14 @@ mod tests {
         assert_eq!(fail["error"]["code"], "element_not_found");
         assert_eq!(fail["error"]["hint"], "read the screen");
         assert_eq!(fail["candidates"], "일반");
+
+        let blocked = envelope(
+            Err(Fail::blocked("confirm_denied", "the user said no").with("guard", "x")),
+            Instant::now(),
+        );
+        assert_eq!(blocked["ok"], false);
+        assert_eq!(blocked["outcome"], "blocked");
+        assert_eq!(blocked["error"]["code"], "confirm_denied");
+        assert_eq!(blocked["guard"], "x");
     }
 }

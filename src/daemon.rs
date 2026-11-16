@@ -12,7 +12,7 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     sync::Mutex,
 };
 
@@ -116,6 +116,11 @@ pub fn budget(cmd: &str) -> Duration {
     }
 }
 
+/// The longest request line read.
+const MAX_REQUEST_BYTES: u64 = 16 << 20;
+/// How long a client may take to send its request line.
+const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
 struct Shared {
     session: Mutex<Session>,
     last_request: StdMutex<Instant>,
@@ -126,7 +131,15 @@ struct Shared {
 async fn handle(stream: ipc::Stream, shared: Arc<Shared>) -> Result<()> {
     let (read, mut write) = tokio::io::split(stream);
     let mut line = String::new();
-    BufReader::new(read).read_line(&mut line).await?;
+    // A client that never finishes its line, or sends without end, does not
+    // hold the daemon: the request is cut at 16 MiB and 30 s.
+    let mut reader = BufReader::new(read.take(MAX_REQUEST_BYTES));
+    match tokio::time::timeout(REQUEST_READ_TIMEOUT, reader.read_line(&mut line)).await {
+        Ok(read) => {
+            read?;
+        }
+        Err(_) => return Ok(()),
+    }
     if line.trim().is_empty() {
         return Ok(());
     }
@@ -161,15 +174,17 @@ async fn handle(stream: ipc::Stream, shared: Arc<Shared>) -> Result<()> {
         cmd => {
             events::record("daemon.command", "started", 0, json!({ "udid": shared.udid, "command": cmd }));
             let mut session = shared.session.lock().await;
+            // A request may also wait for the person to answer the guard.
+            let limit = budget(cmd) + session.guard_extra_time(cmd);
             let work = Box::pin(dispatch(&mut session, cmd, &req.args));
-            let result = match tokio::time::timeout(budget(cmd), work).await {
+            let result = match tokio::time::timeout(limit, work).await {
                 Ok(r) => r,
                 Err(_) => {
                     // Whatever was in flight is abandoned with its connections.
                     session.reset();
                     Err(Fail::unknown(
                         "timeout",
-                        format!("`{cmd}` did not finish within {} s", budget(cmd).as_secs()),
+                        format!("`{cmd}` did not finish within {} s", limit.as_secs()),
                     )
                     .hint(crate::i18n::t(
                         "입력이 일부 나갔을 수 있습니다. `iph read`로 화면을 확인하세요.",
@@ -182,6 +197,8 @@ async fn handle(stream: ipc::Stream, shared: Arc<Shared>) -> Result<()> {
             }
             events::record("daemon.command", if result.is_ok() { "ok" } else { "error" }, started.elapsed().as_millis(),
                 json!({ "udid": shared.udid, "command": cmd, "error": result.as_ref().err().map(|f| f.error_json()) }));
+            // Whatever suspended the guard ends with the request.
+            session.guard_suspended = false;
             let reply = envelope(result, started);
             session.close_input_if_unheld().await;
             session.sweep().await;

@@ -4,7 +4,7 @@ use std::{io::Read, time::Instant};
 
 use clap::{Parser, Subcommand};
 use iphone_cli::{
-    client, clock, connect, daemon, devices, diagnose, events, fields, human,
+    client, clock, connect, daemon, devices, diagnose, events, fields, guard, human,
     mcp,
     reply::{Fail, envelope},
     script, setup,
@@ -18,7 +18,8 @@ use serde_json::{Map, Value, json};
     about = "Read and operate any app on a real iPhone through its accessibility tree",
     long_about = "Read and operate any app on a real iPhone through its accessibility tree.\n\
                   No XCUITest, WebDriverAgent or Xcode signing. Output is JSON; add --human for people.\n\
-                  Exit codes: 0 ok, 1 nothing was sent, 2 outcome unknown (check the screen)."
+                  Exit codes: 0 ok, 1 nothing was sent, 2 outcome unknown (check the screen),\n\
+                  3 blocked by the guard (nothing was sent; do not retry, tell the user)."
 )]
 struct Cli {
     /// Device to use. Defaults to IPH_UDID, config.toml, or the only connected iPhone.
@@ -173,6 +174,16 @@ enum Cmd {
     /// Internal: send a raw daemon command (recovery tests).
     #[command(hide = true)]
     Debug { command: String },
+    /// Internal: the guard's confirmation dialog, shown by the daemon.
+    #[command(hide = true, name = "confirm-dialog")]
+    ConfirmDialog {
+        #[arg(long)]
+        nonce: String,
+        #[arg(long, allow_hyphen_values = true)]
+        title: String,
+        #[arg(long, allow_hyphen_values = true)]
+        body: String,
+    },
 }
 
 fn print(value: &Value, human_out: bool, cmd: &str) {
@@ -191,6 +202,7 @@ fn exit_code(value: &Value) -> i32 {
     }
     match value["outcome"].as_str() {
         Some("unknown") => 2,
+        Some("blocked") => 3,
         _ => 1,
     }
 }
@@ -256,12 +268,13 @@ async fn run(cli: Cli) -> i32 {
 
     // Commands that need no phone.
     match &cli.command {
+        Cmd::ConfirmDialog { nonce, title, body } => return guard::dialog_main(nonce, title, body),
         Cmd::Diagnose(args) => {
             // Run one finite iph command without a shell. Reject recursive
             // collectors and interactive/long-lived commands.
             if !args.command.is_empty() {
                 let child = Cli::try_parse_from(std::iter::once("iph".to_string()).chain(args.command.iter().cloned()));
-                if child.is_ok_and(|c| matches!(c.command, Cmd::Diagnose(_) | Cmd::Daemon | Cmd::Mcp { .. } | Cmd::Setup { .. })) {
+                if child.is_ok_and(|c| matches!(c.command, Cmd::Diagnose(_) | Cmd::Daemon | Cmd::Mcp { .. } | Cmd::Setup { .. } | Cmd::ConfirmDialog { .. })) {
                     let v = envelope(Err(Fail::invalid("diagnose can capture a finite iph command; diagnose, daemon, mcp and setup cannot be nested")), started);
                     print(&v, human_out, "diagnose");
                     return 1;
@@ -426,10 +439,43 @@ async fn run(cli: Cli) -> i32 {
                 }
             }
         }
-        Cmd::Scripts | Cmd::Devices | Cmd::Diagnose(_) => unreachable!(),
+        Cmd::Scripts | Cmd::Devices | Cmd::Diagnose(_) | Cmd::ConfirmDialog { .. } => unreachable!(),
     };
 
     let value = client::request(&udid, cmd, args).await;
     print(&value, human_out, cmd);
     exit_code(&value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_codes_follow_the_outcome() {
+        assert_eq!(exit_code(&json!({ "ok": true, "outcome": "done" })), 0);
+        assert_eq!(exit_code(&json!({ "ok": false, "outcome": "not_sent" })), 1);
+        assert_eq!(exit_code(&json!({ "ok": false, "outcome": "unknown" })), 2);
+        assert_eq!(exit_code(&json!({ "ok": false, "outcome": "blocked" })), 3);
+    }
+
+    #[test]
+    fn the_dialog_subcommand_takes_any_text() {
+        let cli = Cli::try_parse_from([
+            "iph",
+            "confirm-dialog",
+            "--nonce=abc",
+            "--title=-iph",
+            "--body=--udid x\n- second line",
+        ])
+        .unwrap();
+        match cli.command {
+            Cmd::ConfirmDialog { nonce, title, body } => {
+                assert_eq!(nonce, "abc");
+                assert_eq!(title, "-iph");
+                assert_eq!(body, "--udid x\n- second line");
+            }
+            _ => panic!("wrong subcommand"),
+        }
+    }
 }
