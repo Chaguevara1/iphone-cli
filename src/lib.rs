@@ -17,6 +17,7 @@ pub mod diagnose;
 pub mod dnd;
 pub mod doctor;
 pub mod events;
+pub mod guard;
 pub mod human;
 pub mod i18n;
 pub mod ipc;
