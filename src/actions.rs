@@ -19,6 +19,7 @@ use crate::{
         session::{Fresh, Gesture, Session, reuse},
     },
     fields,
+    guard::Action,
     i18n::t,
     reply::{Fail, Res},
     selector::{Selector, dedupe_targets},
@@ -399,6 +400,17 @@ fn nfc(s: &str) -> String {
     s.nfc().collect()
 }
 
+/// What a tap sends, for the guard.
+fn tap_action(args: &TapArgs) -> Action {
+    if args.double {
+        Action::DoubleTap
+    } else if args.long_ms.is_some() {
+        Action::LongPress
+    } else {
+        Action::Tap
+    }
+}
+
 /// The app now in front, when it is not the one that was in front before.
 fn app_changed(before: &Screen, after: &Screen) -> Option<Value> {
     let was: Vec<i64> = before.apps.iter().map(|a| a.pid).collect();
@@ -613,21 +625,41 @@ impl Session {
         Some(located)
     }
 
-    /// Locate the targets, make sure input can be sent, and locate them again
-    /// if getting ready took long enough for the screen to have moved on: a
-    /// cold input session takes seconds to open, and a tap must never go to
-    /// where something used to be.
-    async fn locate_ready(&mut self, targets: &[Target]) -> Res<(Screen, Vec<(f64, f64, Option<Element>)>)> {
+    /// Locate the targets, let the guard judge them, make sure input can be
+    /// sent, and locate them again if getting ready took long enough for the
+    /// screen to have moved on: a cold input session takes seconds to open, a
+    /// person takes seconds to answer, and a tap must never go to where
+    /// something used to be. The guard comes before the input session, so a
+    /// refused action never opens screen sharing.
+    async fn locate_ready(
+        &mut self,
+        targets: &[Target],
+        action: Action,
+    ) -> Res<(Screen, Vec<(f64, f64, Option<Element>)>)> {
         let located = match self.locate_confirmed(targets).await {
             Some(l) => l,
             None => self.locate(targets, Fresh::MaxAge(reuse())).await?,
         };
+        let approval = self.guard_targets(&located.0, &located.1, action).await?;
         let started = std::time::Instant::now();
         self.ensure_input().await?;
-        if started.elapsed() < Duration::from_millis(400) {
+        let asked = approval.as_ref().is_some_and(|a| a.asked);
+        if started.elapsed() < Duration::from_millis(400) && !asked {
             return Ok(located);
         }
-        self.locate(targets, Fresh::Force).await
+        let again = self.locate(targets, Fresh::Force).await?;
+        match approval {
+            Some(approval) => approval.still_valid(&again.0, &again.1)?,
+            None => {
+                // The screen moved on: judge what is there now.
+                if let Some(late) = self.guard_targets(&again.0, &again.1, action).await? {
+                    let last = self.locate(targets, Fresh::Force).await?;
+                    late.still_valid(&last.0, &last.1)?;
+                    return Ok(last);
+                }
+            }
+        }
+        Ok(again)
     }
 
     pub async fn cmd_tap(&mut self, args: TapArgs) -> Res {
@@ -640,7 +672,7 @@ impl Session {
             return Err(Fail::invalid("--long must be 1..60000 ms"));
         }
         let target = parse_target(&args.target)?;
-        let (screen, mut points) = match self.locate_ready(std::slice::from_ref(&target)).await {
+        let (screen, mut points) = match self.locate_ready(std::slice::from_ref(&target), tap_action(&args)).await {
             Ok(located) => located,
             Err(read_failed) => return self.tap_unread(&target, &args, read_failed).await,
         };
@@ -724,6 +756,7 @@ impl Session {
         if x < 0.0 || y < 0.0 || x > w || y > h {
             return Err(Fail::invalid(format!("point {x},{y} is outside the {w}x{h} screen")));
         }
+        self.guard_blind(tap_action(args), Some((x, y))).await?;
         let (nx, ny) = (normalize(x, w), normalize(y, h));
         let gesture = if args.double {
             Gesture::DoubleTap { x: nx, y: ny }
@@ -750,7 +783,7 @@ impl Session {
             return Err(Fail::invalid("the tap list is empty"));
         }
         let parsed: Vec<Target> = targets.iter().map(parse_target).collect::<Res<_>>()?;
-        let (screen, points) = self.locate_ready(&parsed).await?;
+        let (screen, points) = self.locate_ready(&parsed, Action::TapSequence).await?;
         let before = screen.signature();
         let normalized: Vec<(u16, u16)> = points
             .iter()
@@ -876,6 +909,10 @@ impl Session {
         };
         let duration = Duration::from_millis(args.duration_ms.unwrap_or(250).clamp(50, 10_000));
         let motion = if args.drag { Motion::Place } else { Motion::Flick };
+        match &read {
+            Ok((_, screen)) => self.guard_swipe(screen, from).await?,
+            Err(_) => self.guard_blind(Action::Swipe, Some(from)).await?,
+        }
         if read.is_err() {
             // `unread_size`: drag on the last known size, read nothing after.
             for (x, y) in [from, to] {
@@ -926,6 +963,7 @@ impl Session {
         if args.direction != "up" && args.direction != "down" {
             return Err(Fail::invalid("direction must be up or down"));
         }
+        self.guard_app_input().await?;
         let Some(until) = &args.until else {
             let (changed, after) = self.scroll_step(&args.direction).await?;
             return Ok(fields! {
@@ -1002,6 +1040,7 @@ impl Session {
         let (_, screen) = self
             .screen(Fresh::MaxAge(reuse()), false, BuildOptions::default())
             .await?;
+        self.guard_key(&screen, usage, &modifiers).await?;
         let before = Some(screen.signature());
         let input_began = Instant::now();
         let input = self.ensure_input().await?;
@@ -1032,8 +1071,10 @@ impl Session {
             Err(read_failed) if daemon_silent(&read_failed) => None,
             Err(read_failed) => return Err(read_failed),
         };
+        self.guard_button(page, usage)?;
         let input_began = Instant::now();
         self.send_gesture(Gesture::Button { page, usage, hold: Duration::from_millis(hold) }).await?;
+        self.guard_button_sent(page, usage);
         let changed = match &before {
             Some(sig) => self.observe(input_began, AFTER_LAUNCH).await.map(|(_, sc)| sc.signature() != *sig),
             None => None,
@@ -1099,6 +1140,7 @@ impl Session {
 
     pub async fn cmd_launch(&mut self, args: LaunchArgs) -> Res {
         let bundle = self.resolve_bundle(&args.app).await?;
+        self.guard_launch(&bundle).await?;
         let mut svc = self.app_service().await?;
         let launch_began = Instant::now();
         // From here the launch request may have reached the phone.
@@ -1203,6 +1245,7 @@ impl Session {
             .with("screen_summary", screen.summary(12)));
         };
         trace(|| "type: focused field found".into());
+        self.guard_type(&screen, &field, &args.text, args.submit).await?;
 
         // The input session first: if it cannot be had, nothing has been
         // touched yet, the clipboard included.

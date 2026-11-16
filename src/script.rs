@@ -12,7 +12,8 @@
 //! exactly as a command typed at the shell.
 //!
 //! A script cannot go on after a call whose input may or may not have
-//! reached the phone. The run ends there, with `outcome: "unknown"`.
+//! reached the phone. The run ends there, with `outcome: "unknown"`. Nor
+//! after a call the guard blocked, even if the script catches it.
 
 use std::{
     sync::{
@@ -80,13 +81,18 @@ pub fn list() -> Vec<(String, String, String)> {
 /// A saved script by name: the personal folder first, then the examples.
 /// Returns its code and where it came from.
 pub fn load(name: &str) -> Res<(String, String)> {
-    if name.ends_with(".js") || name.contains('/') {
-        return Err(Fail::invalid(format!("\"{name}\" is a file, not the name of a saved script")).hint(t(
-            "파일은 `iph script <파일>`로 실행합니다.",
-            "Run a file with `iph script <file>`.",
+    if !valid_name(name) {
+        return Err(Fail::invalid(format!("\"{name}\" is not the name of a saved script")).hint(t(
+            "저장된 스크립트 이름은 글자·숫자·-·_·.·공백만 씁니다. 파일은 `iph script <파일>`로 실행합니다.",
+            "A saved script's name uses letters, digits, -, _, . and spaces. Run a file with `iph script <file>`.",
         )));
     }
-    let path = paths::personal_scripts().join(format!("{name}.js"));
+    let dir = paths::personal_scripts();
+    let path = dir.join(format!("{name}.js"));
+    // An absolute or UNC name would replace the folder in the join.
+    if path.parent() != Some(dir.as_path()) {
+        return Err(Fail::invalid(format!("\"{name}\" is not the name of a saved script")));
+    }
     if let Ok(code) = std::fs::read_to_string(&path) {
         return Ok((code, path.display().to_string()));
     }
@@ -97,6 +103,19 @@ pub fn load(name: &str) -> Res<(String, String)> {
         "`iph scripts`로 목록을 확인하세요. 개인 스크립트는 ~/.config/iph/scripts/<이름>.js 에 둡니다.",
         "List them with `iph scripts`. Personal scripts live in ~/.config/iph/scripts/<name>.js.",
     )))
+}
+
+/// A saved script's name: 1 to 100 letters, digits, `-`, `_`, `.` or spaces,
+/// not starting or ending with a space or dot, no `..`, not ending in `.js`.
+/// Never a path.
+fn valid_name(name: &str) -> bool {
+    let count = name.chars().count();
+    (1..=100).contains(&count)
+        && name.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '))
+        && !name.starts_with([' ', '.'])
+        && !name.ends_with([' ', '.'])
+        && !name.contains("..")
+        && !name.to_lowercase().ends_with(".js")
 }
 
 pub fn cmd_scripts() -> Res {
@@ -450,6 +469,8 @@ pub struct RunState {
     pub expected_pid: Option<i64>,
     /// The call after which the run may not go on, and its result.
     pub unknown: Option<(String, Value)>,
+    /// A call the guard blocked, and its result. The run ends there too.
+    pub blocked: Option<(String, Value)>,
 }
 
 impl RunState {
@@ -469,13 +490,23 @@ impl RunState {
             || outcome == "unknown"
             || outcome == "done"
             // These may have scrolled before whatever went wrong.
-            || (MANY_INPUTS.contains(&cmd) && result["error"]["code"] != "invalid_argument");
+            || (MANY_INPUTS.contains(&cmd)
+                && outcome != "blocked"
+                && result["error"]["code"] != "invalid_argument");
         if INPUTS.contains(&cmd) && sent {
             self.inputs_sent += 1;
         }
         if outcome == "unknown" {
             self.unknown = Some((cmd.to_string(), result.clone()));
         }
+        if outcome == "blocked" && self.blocked.is_none() {
+            self.blocked = Some((cmd.to_string(), result.clone()));
+        }
+    }
+
+    /// True once the run must not go on.
+    pub fn must_stop(&self) -> bool {
+        self.unknown.is_some() || self.blocked.is_some()
     }
 }
 
@@ -507,9 +538,12 @@ pub fn finish(ended: Ended, state: &RunState) -> Res {
     // The run's outcome. Anything that stops a run after input has gone out
     // is `unknown`, because running the script again would send that input
     // again.
+    // A run the guard stopped before any input went out is `blocked`.
     let outcome_of = |call: Option<&Value>| match call.and_then(|c| c["outcome"].as_str()) {
         Some("unknown") => Outcome::Unknown,
         _ if sent > 0 => Outcome::Unknown,
+        Some("blocked") => Outcome::Blocked,
+        _ if state.blocked.is_some() => Outcome::Blocked,
         _ => Outcome::NotSent,
     };
     let failed_call = |result: &Value, cmd: &str, line: Option<u64>| -> Fail {
@@ -558,7 +592,7 @@ pub fn finish(ended: Ended, state: &RunState) -> Res {
                 .with("line", json!(line)),
             }
         }
-        End::Stopped("unknown_outcome") => match &state.unknown {
+        End::Stopped("unknown_outcome") => match state.unknown.as_ref().or(state.blocked.as_ref()) {
             Some((cmd, result)) => failed_call(result, cmd, None),
             None => Fail::unknown("script_stopped", "the script was stopped"),
         },
@@ -678,8 +712,11 @@ impl ScriptHost for PhoneHost<'_> {
         let result = match self.state.prepare(cmd, args) {
             Ok(Prepared { args, hint }) => {
                 Box::pin(self.dispatch(cmd, args)).await.map_err(|mut f| {
-                    // Whoever wrote the script knows what this call waits on.
-                    if let Some(hint) = hint {
+                    // Whoever wrote the script knows what this call waits on;
+                    // a guard's refusal keeps its own hint.
+                    if let Some(hint) = hint
+                        && f.outcome != Outcome::Blocked
+                    {
                         f.hint = Some(hint);
                     }
                     f
@@ -693,7 +730,7 @@ impl ScriptHost for PhoneHost<'_> {
     }
 
     fn must_stop(&self) -> bool {
-        self.state.unknown.is_some()
+        self.state.must_stop()
     }
 
     fn cut_off(&mut self, cmd: &str) {
@@ -796,7 +833,7 @@ mod tests {
             value
         }
         fn must_stop(&self) -> bool {
-            self.state.unknown.is_some()
+            self.state.must_stop()
         }
         fn cut_off(&mut self, _cmd: &str) {
             self.state.inputs_sent += 1;
@@ -922,6 +959,66 @@ mod tests {
         assert_eq!(f.extra["reason"]["code"], "input_failed");
         assert_eq!(fake.asked.len(), 1, "the tap is not sent a second time");
         assert_eq!(kept.end, End::Stopped("unknown_outcome"));
+    }
+
+    fn blocked_tap() -> Value {
+        json!({"ok": false, "outcome": "blocked",
+            "error": {"code": "confirm_denied", "message": "the user refused this action", "hint": "tell the user"},
+            "guard": {"action": "tap", "mode": "human", "categories": ["money"], "rules": ["결제"]}})
+    }
+
+    #[test]
+    fn nothing_follows_a_blocked_call() {
+        let mut fake = Fake::default();
+        fake.answers.insert("tap".into(), blocked_tap());
+        // The script catches the refusal and tries again.
+        let code = "for (let i = 0; i < 5; i++) { try { tap('결제하기') } catch (e) {} }\nreturn 'went on'";
+        let (res, kept) = go(&mut fake, code, json!({}), limits());
+        let f = res.unwrap_err();
+        assert_eq!(f.outcome, Outcome::Blocked);
+        assert_eq!(f.extra["reason"]["code"], "confirm_denied");
+        assert_eq!(f.hint.as_deref(), Some("tell the user"));
+        assert_eq!(f.extra["guard"]["categories"], json!(["money"]));
+        assert_eq!(fake.asked.len(), 1, "asked once, never again");
+        assert_eq!(kept.end, End::Stopped("unknown_outcome"));
+        assert_eq!(f.extra["inputs_sent"], 0);
+    }
+
+    #[test]
+    fn a_block_after_input_leaves_the_outcome_unknown() {
+        let mut fake = Fake::default();
+        fake.answers.insert("tap".into(), blocked_tap());
+        let (res, kept) = go(&mut fake, "swipe('up');\ntap('결제하기');\nread();", json!({}), limits());
+        let f = res.unwrap_err();
+        assert_eq!(f.outcome, Outcome::Unknown);
+        assert_eq!(f.extra["reason"]["code"], "confirm_denied");
+        assert_eq!(fake.asked.len(), 2);
+        assert_eq!(kept.end, End::Stopped("unknown_outcome"));
+        // A blocked scroll is not counted as having scrolled.
+        let mut state = RunState::default();
+        let mut blocked = blocked_tap();
+        blocked["guard"]["action"] = json!("scroll");
+        state.note("scroll", &blocked);
+        assert_eq!(state.inputs_sent, 0);
+        assert!(state.must_stop());
+    }
+
+    #[test]
+    fn saved_script_names_are_never_paths() {
+        for name in [
+            "..\\..\\x", "../x", "C:\\x", "\\\\host\\share\\x", "a/b", "a\\b", ".x", "x.", " x", "x ",
+            "x.js", "X.JS", "a..b", "", "/etc/passwd",
+        ] {
+            let f = load(name).unwrap_err();
+            assert_eq!(f.code, "invalid_argument", "{name:?}");
+        }
+        assert!(!valid_name(&"a".repeat(101)));
+        assert!(valid_name("없는-이름"));
+        assert!(valid_name("my script_2.v1"));
+        assert_eq!(load("없는-이름-4f2e").unwrap_err().code, "script_not_found");
+        for (name, _) in BUILTIN {
+            assert!(load(name).is_ok(), "{name}");
+        }
     }
 
     #[test]

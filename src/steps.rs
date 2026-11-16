@@ -804,6 +804,8 @@ impl Session {
 
     pub(crate) async fn read_list(&mut self, body: &Value) -> Res<(String, Value, Value)> {
         let map = body.as_object().ok_or_else(|| Fail::invalid("read_list needs a map"))?;
+        // It scrolls: the app lists apply.
+        Box::pin(self.guard_app_input()).await?;
         let name = map.get("name").and_then(|v| v.as_str()).unwrap_or("rows");
         let row = Selector::from_value(map.get("row").ok_or_else(|| Fail::invalid("read_list needs `row`"))?)
             .map_err(|e| Fail::invalid(e.to_string()))?;
@@ -1295,11 +1297,15 @@ impl Session {
                     }
                 }
                 Err(mut f) => {
-                    if f.outcome != crate::reply::Outcome::NotSent {
+                    let blocked = f.outcome == crate::reply::Outcome::Blocked;
+                    if !blocked && f.outcome != crate::reply::Outcome::NotSent {
                         inputs_sent += 1;
                     }
-                    // Whoever wrote the steps knows what this one usually waits on.
-                    if let Some(hint) = hint {
+                    // Whoever wrote the steps knows what this one usually
+                    // waits on; a guard's refusal keeps its own hint.
+                    if let Some(hint) = hint
+                        && !blocked
+                    {
                         f.hint = Some(hint);
                     }
                     return Err(step_failure(index, raw, f, kind, &records, &outputs, ms)

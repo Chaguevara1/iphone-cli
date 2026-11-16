@@ -1,0 +1,13 @@
+{
+  "_comment": "Made-up confirmation alert for guard tests. Not captured from any real app.",
+  "width": 430.0,
+  "height": 932.0,
+  "apps": [{ "pid": 6161, "name": "가상 은행" }],
+  "elements": [
+    { "id": "app00003", "role": "application", "label": "가상 은행", "pid": 6161, "frame": { "x": 0, "y": 0, "w": 430, "h": 932 } },
+    { "id": "alrt0001", "role": "other", "pid": 6161, "frame": { "x": 50, "y": 360, "w": 330, "h": 200 }, "parent": "app00003", "depth": 1 },
+    { "id": "titl0001", "role": "text", "label": "김철수님에게 50,000원을 송금하시겠습니까?", "pid": 6161, "traits": ["static_text"], "frame": { "x": 70, "y": 380, "w": 290, "h": 60 }, "parent": "alrt0001", "depth": 2 },
+    { "id": "canc0003", "role": "button", "label": "취소", "pid": 6161, "traits": ["button"], "frame": { "x": 50, "y": 500, "w": 165, "h": 60 }, "parent": "alrt0001", "depth": 2 },
+    { "id": "okay0003", "role": "button", "label": "확인", "pid": 6161, "traits": ["button"], "frame": { "x": 215, "y": 500, "w": 165, "h": 60 }, "parent": "alrt0001", "depth": 2 }
+  ]
+}

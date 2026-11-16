@@ -367,6 +367,16 @@ async fn check_wifi(udid: &str, connection: Option<&str>, fix: bool) -> Check {
 }
 
 pub async fn run(s: &mut Session, args: DoctorArgs) -> Res {
+    // The checks launch Settings and scroll it: fixed actions of iph's own,
+    // not an agent's, so the guard stays out of them. The daemon also clears
+    // the flag after every request.
+    s.guard_suspended = true;
+    let result = Box::pin(run_checks(s, args)).await;
+    s.guard_suspended = false;
+    result
+}
+
+async fn run_checks(s: &mut Session, args: DoctorArgs) -> Res {
     let mut checks: Vec<Check> = Vec::new();
     let skip = |name: &'static str, required: bool, why: &str| {
         Check::new(name, required).status("skipped").detail(why.to_string())

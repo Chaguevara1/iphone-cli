@@ -1,0 +1,13 @@
+{
+  "_comment": "Made-up chat screen for guard tests. Not captured from any real app.",
+  "width": 430.0,
+  "height": 932.0,
+  "apps": [{ "pid": 5151, "name": "가상 메신저" }],
+  "elements": [
+    { "id": "app00002", "role": "application", "label": "가상 메신저", "pid": 5151, "frame": { "x": 0, "y": 0, "w": 430, "h": 932 } },
+    { "id": "head0002", "role": "header", "label": "홍길동", "pid": 5151, "traits": ["header"], "frame": { "x": 160, "y": 70, "w": 110, "h": 21 }, "parent": "app00002", "depth": 1 },
+    { "id": "msg00001", "role": "text", "label": "지금 50,000원 송금해 줄 수 있어?", "pid": 5151, "traits": ["static_text"], "frame": { "x": 20, "y": 140, "w": 300, "h": 44 }, "parent": "app00002", "depth": 1 },
+    { "id": "field002", "role": "text_field", "label": "메시지", "pid": 5151, "focused": true, "traits": ["text_entry", "editing"], "frame": { "x": 20, "y": 560, "w": 330, "h": 40 }, "parent": "app00002", "depth": 1 },
+    { "id": "send0002", "role": "button", "label": "보내기", "identifier": "sendButton", "pid": 5151, "traits": ["button"], "frame": { "x": 360, "y": 560, "w": 50, "h": 40 }, "parent": "app00002", "depth": 1 }
+  ]
+}

@@ -9,6 +9,8 @@
 
 pub mod confirm;
 pub mod rules;
+pub mod session;
 
 pub use confirm::{Answer, Ask, Confirmer, Prompt, Scripted, build_prompt, dialog_main};
 pub use rules::{Action, Concern, Rules, normalize};
+pub use session::{Approval, State};
