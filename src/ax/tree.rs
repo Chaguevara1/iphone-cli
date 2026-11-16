@@ -153,14 +153,40 @@ fn handle(key: &ObjKey) -> String {
 /// A readable value, including an empty or whitespace-only string. Missing
 /// attributes and unsupported values are not evidence of an empty field.
 pub(crate) fn value_text(v: Option<&Ka>) -> Option<String> {
-    Some(match v? {
+    let s = match v? {
         Ka::Str(s) => s.clone(),
         other @ Ka::Obj { .. } => other.text()?,
         Ka::Int(i) => i.to_string(),
         Ka::UInt(u) => u.to_string(),
         Ka::Real(r) => r.to_string(),
         _ => return None,
-    })
+    };
+    Some(strip_invisible(s))
+}
+
+/// Characters that render as nothing but can hide text from a reader while an
+/// agent still sees it: zero-width spaces and joiners other than ZWJ/ZWNJ,
+/// bidi overrides and isolates, and Unicode tags ("ASCII smuggling"). ZWJ and
+/// ZWNJ stay because emoji sequences and some scripts need them.
+fn is_invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200B}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{FEFF}'
+            | '\u{180E}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{E0000}'..='\u{E007F}'
+    )
+}
+
+fn strip_invisible(s: String) -> String {
+    if s.chars().any(is_invisible) {
+        s.chars().filter(|c| !is_invisible(*c)).collect()
+    } else {
+        s
+    }
 }
 
 pub(crate) fn text(v: Option<&Ka>) -> Option<String> {
@@ -408,6 +434,28 @@ mod tests {
             text(Some(&Ka::Str("  hello  ".into()))).as_deref(),
             Some("hello")
         );
+    }
+
+    #[test]
+    fn invisible_characters_are_removed_from_screen_text() {
+        // Unicode tags spelling "ignore", an RLO override and zero-width spaces.
+        let smuggled: String = "Pay\u{200B}"
+            .chars()
+            .chain("ignore".chars().map(|c| char::from_u32(0xE0000 + c as u32).unwrap()))
+            .chain("\u{202E}now\u{2066}\u{2069}\u{FEFF}\u{2060}".chars())
+            .collect();
+        assert_eq!(text(Some(&Ka::Str(smuggled))).as_deref(), Some("Paynow"));
+        assert_eq!(
+            value_text(Some(&Ka::Str("a\u{200B} b\u{202D}".into()))).as_deref(),
+            Some("a b")
+        );
+        // Nothing but invisible characters reads as no label at all.
+        assert_eq!(text(Some(&Ka::Str("\u{200B}\u{E0041}".into()))), None);
+        // ZWJ emoji, ZWNJ and Korean stay as they are.
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        assert_eq!(text(Some(&Ka::Str(family.into()))).as_deref(), Some(family));
+        assert_eq!(text(Some(&Ka::Str("می\u{200C}خواهم".into()))).as_deref(), Some("می\u{200C}خواهم"));
+        assert_eq!(text(Some(&Ka::Str("결제하기".into()))).as_deref(), Some("결제하기"));
     }
 
     #[test]
