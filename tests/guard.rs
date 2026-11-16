@@ -17,6 +17,26 @@ use iphone_cli::{
 
 const NO_SUCH_PHONE: &str = "00000000-TESTONLY-NOPHONE";
 
+/// Run a test's future on a thread with a big stack, as `iph` runs its own
+/// (main.rs): the session's futures do not fit the 2 MiB of a test thread
+/// in a debug build. The future is made on that thread, so it need not be
+/// `Send`; a panic still fails the test.
+fn on_big_stack<F, Fut>(make: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()>,
+{
+    std::thread::Builder::new()
+        .stack_size(16 << 20)
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            runtime.block_on(make());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 fn isolate() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -70,8 +90,12 @@ fn at(screen: &Screen, selector: &str) -> Vec<(f64, f64, Option<Element>)> {
     vec![(x, y, Some(el.clone()))]
 }
 
-#[tokio::test]
-async fn a_pay_button_asks_and_a_no_blocks_it() {
+#[test]
+fn a_pay_button_asks_and_a_no_blocks_it() {
+    on_big_stack(a_pay_button_asks_and_a_no_blocks_it_body);
+}
+
+async fn a_pay_button_asks_and_a_no_blocks_it_body() {
     let (mut s, state) = session(vec![Answer::Denied]);
     let screen = checkout();
     let points = at(&screen, "label~=결제하기");
@@ -88,8 +112,12 @@ async fn a_pay_button_asks_and_a_no_blocks_it() {
     assert!(state.asked[0].body.contains("3,000원 결제하기"), "{}", state.asked[0].body);
 }
 
-#[tokio::test]
-async fn an_approval_holds_only_for_the_same_target() {
+#[test]
+fn an_approval_holds_only_for_the_same_target() {
+    on_big_stack(an_approval_holds_only_for_the_same_target_body);
+}
+
+async fn an_approval_holds_only_for_the_same_target_body() {
     let (mut s, state) = session(vec![Answer::Approved]);
     let screen = checkout();
     let points = at(&screen, "label~=\"Pay ₩\"");
@@ -111,8 +139,12 @@ async fn an_approval_holds_only_for_the_same_target() {
     assert!(approval.still_valid(&screen, &[]).is_err());
 }
 
-#[tokio::test]
-async fn after_a_no_the_next_guarded_action_is_refused_without_asking() {
+#[test]
+fn after_a_no_the_next_guarded_action_is_refused_without_asking() {
+    on_big_stack(after_a_no_the_next_guarded_action_is_refused_without_asking_body);
+}
+
+async fn after_a_no_the_next_guarded_action_is_refused_without_asking_body() {
     let (mut s, state) = session(vec![Answer::Denied, Answer::Approved]);
     let screen = checkout();
     let points = at(&screen, "label~=결제하기");
@@ -124,8 +156,12 @@ async fn after_a_no_the_next_guarded_action_is_refused_without_asking() {
     assert!(s.guard_targets(&screen, &at(&screen, "취소"), Action::Tap).await.unwrap().is_none());
 }
 
-#[tokio::test]
-async fn no_answer_and_no_dialog_both_block() {
+#[test]
+fn no_answer_and_no_dialog_both_block() {
+    on_big_stack(no_answer_and_no_dialog_both_block_body);
+}
+
+async fn no_answer_and_no_dialog_both_block_body() {
     let screen = checkout();
     let points = at(&screen, "label~=결제하기");
     let (mut s, _) = session(vec![Answer::TimedOut]);
@@ -137,8 +173,12 @@ async fn no_answer_and_no_dialog_both_block() {
     assert_eq!(s.guard_targets(&screen, &points, Action::Tap).await.unwrap_err().code, "confirm_unavailable");
 }
 
-#[tokio::test]
-async fn deny_refuses_and_off_lets_through() {
+#[test]
+fn deny_refuses_and_off_lets_through() {
+    on_big_stack(deny_refuses_and_off_lets_through_body);
+}
+
+async fn deny_refuses_and_off_lets_through_body() {
     let screen = checkout();
     let points = at(&screen, "label~=결제하기");
     let (mut s, state) = session_with(GuardConfig { mode: GuardMode::Deny, ..Default::default() }, vec![Answer::Approved]);
@@ -152,8 +192,12 @@ async fn deny_refuses_and_off_lets_through() {
     assert_eq!(asked(&state), 0);
 }
 
-#[tokio::test]
-async fn ordinary_buttons_pass_without_asking() {
+#[test]
+fn ordinary_buttons_pass_without_asking() {
+    on_big_stack(ordinary_buttons_pass_without_asking_body);
+}
+
+async fn ordinary_buttons_pass_without_asking_body() {
     let (mut s, state) = session(vec![]);
     let screen = checkout();
     for selector in ["취소", "뒤로", "Payment methods"] {
@@ -166,8 +210,12 @@ async fn ordinary_buttons_pass_without_asking() {
     assert_eq!(asked(&state), 0);
 }
 
-#[tokio::test]
-async fn a_tap_list_with_a_guarded_target_is_refused() {
+#[test]
+fn a_tap_list_with_a_guarded_target_is_refused() {
+    on_big_stack(a_tap_list_with_a_guarded_target_is_refused_body);
+}
+
+async fn a_tap_list_with_a_guarded_target_is_refused_body() {
     let (mut s, state) = session(vec![Answer::Approved]);
     let screen = checkout();
     let mut points = at(&screen, "취소");
@@ -177,8 +225,12 @@ async fn a_tap_list_with_a_guarded_target_is_refused() {
     assert_eq!(asked(&state), 0);
 }
 
-#[tokio::test]
-async fn a_swipe_that_starts_on_a_pay_button_asks() {
+#[test]
+fn a_swipe_that_starts_on_a_pay_button_asks() {
+    on_big_stack(a_swipe_that_starts_on_a_pay_button_asks_body);
+}
+
+async fn a_swipe_that_starts_on_a_pay_button_asks_body() {
     let (mut s, state) = session(vec![Answer::Denied]);
     let screen = checkout();
     let pay = at(&screen, "label~=결제하기");
@@ -191,8 +243,12 @@ async fn a_swipe_that_starts_on_a_pay_button_asks() {
     assert_eq!(asked(&state), 1);
 }
 
-#[tokio::test]
-async fn only_apps_and_block_apps_hold_in_every_mode() {
+#[test]
+fn only_apps_and_block_apps_hold_in_every_mode() {
+    on_big_stack(only_apps_and_block_apps_hold_in_every_mode_body);
+}
+
+async fn only_apps_and_block_apps_hold_in_every_mode_body() {
     let screen = checkout();
     let cancel = at(&screen, "취소");
     for mode in [GuardMode::Human, GuardMode::Deny, GuardMode::Off] {
@@ -221,8 +277,12 @@ async fn only_apps_and_block_apps_hold_in_every_mode() {
     assert_eq!(s.guard_launch("com.example.shop").await.unwrap_err().code, "app_blocked");
 }
 
-#[tokio::test]
-async fn confirm_apps_ask_before_any_tap() {
+#[test]
+fn confirm_apps_ask_before_any_tap() {
+    on_big_stack(confirm_apps_ask_before_any_tap_body);
+}
+
+async fn confirm_apps_ask_before_any_tap_body() {
     let cfg = GuardConfig { confirm_apps: vec!["com.example.shop".into()], ..Default::default() };
     let (mut s, state) = session_with(cfg, vec![Answer::Approved]);
     s.remember_bundle(4242, Some("com.example.shop".into()));
@@ -231,8 +291,12 @@ async fn confirm_apps_ask_before_any_tap() {
     assert_eq!(asked(&state), 1);
 }
 
-#[tokio::test]
-async fn a_suspended_guard_does_not_judge() {
+#[test]
+fn a_suspended_guard_does_not_judge() {
+    on_big_stack(a_suspended_guard_does_not_judge_body);
+}
+
+async fn a_suspended_guard_does_not_judge_body() {
     let cfg = GuardConfig { only_apps: vec!["com.apple.Preferences".into()], ..Default::default() };
     let (mut s, state) = session_with(cfg, vec![]);
     s.guard_suspended = true;
@@ -242,8 +306,12 @@ async fn a_suspended_guard_does_not_judge() {
     assert_eq!(asked(&state), 0);
 }
 
-#[tokio::test]
-async fn the_lock_button_is_limited_to_two_presses_in_ten_seconds() {
+#[test]
+fn the_lock_button_is_limited_to_two_presses_in_ten_seconds() {
+    on_big_stack(the_lock_button_is_limited_to_two_presses_in_ten_seconds_body);
+}
+
+async fn the_lock_button_is_limited_to_two_presses_in_ten_seconds_body() {
     let (mut s, _) = session(vec![]);
     for _ in 0..2 {
         s.guard_button(0x0C, 0x30).unwrap();
@@ -263,8 +331,12 @@ async fn the_lock_button_is_limited_to_two_presses_in_ten_seconds() {
     }
 }
 
-#[tokio::test]
-async fn return_in_a_chat_and_typing_with_submit_ask() {
+#[test]
+fn return_in_a_chat_and_typing_with_submit_ask() {
+    on_big_stack(return_in_a_chat_and_typing_with_submit_ask_body);
+}
+
+async fn return_in_a_chat_and_typing_with_submit_ask_body() {
     let screen = chat();
     let (mut s, state) = session(vec![Answer::Denied]);
     let fail = s.guard_key(&screen, 0x28, &[]).await.unwrap_err();
@@ -283,8 +355,12 @@ async fn return_in_a_chat_and_typing_with_submit_ask() {
     assert!(state.asked[0].body.contains("네 보낼게"));
 }
 
-#[tokio::test]
-async fn a_password_is_never_shown_in_the_prompt() {
+#[test]
+fn a_password_is_never_shown_in_the_prompt() {
+    on_big_stack(a_password_is_never_shown_in_the_prompt_body);
+}
+
+async fn a_password_is_never_shown_in_the_prompt_body() {
     let mut screen = chat();
     let field = screen.elements.iter_mut().find(|e| e.id == "field002").unwrap();
     field.role = "secure_text_field".into();
@@ -296,8 +372,12 @@ async fn a_password_is_never_shown_in_the_prompt() {
     assert!(!state.asked[0].body.contains("hunter2"));
 }
 
-#[tokio::test]
-async fn ok_on_a_transfer_alert_asks() {
+#[test]
+fn ok_on_a_transfer_alert_asks() {
+    on_big_stack(ok_on_a_transfer_alert_asks_body);
+}
+
+async fn ok_on_a_transfer_alert_asks_body() {
     let screen = alert();
     let (mut s, state) = session(vec![Answer::Denied]);
     let fail = s.guard_targets(&screen, &at(&screen, "확인"), Action::Tap).await.unwrap_err();
@@ -309,8 +389,12 @@ async fn ok_on_a_transfer_alert_asks() {
     assert!(s.guard_targets(&screen, &at(&screen, "취소"), Action::Tap).await.unwrap().is_none());
 }
 
-#[tokio::test]
-async fn blind_input_asks() {
+#[test]
+fn blind_input_asks() {
+    on_big_stack(blind_input_asks_body);
+}
+
+async fn blind_input_asks_body() {
     let (mut s, state) = session(vec![Answer::Denied]);
     let fail = s.guard_blind(Action::Tap, Some((100.0, 200.0))).await.unwrap_err();
     assert_eq!(fail.code, "confirm_denied");
