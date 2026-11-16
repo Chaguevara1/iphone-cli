@@ -255,6 +255,10 @@ pub struct LaunchArgs {
 #[serde(deny_unknown_fields)]
 pub struct ScreenshotArgs {
     pub path: String,
+    /// Write only a new file, never over an existing one, and create no
+    /// folders (the MCP server's screenshots).
+    #[serde(default)]
+    pub create_new: bool,
 }
 
 pub fn parse_args<T: for<'de> Deserialize<'de>>(args: &Value) -> Res<T> {
@@ -1187,13 +1191,23 @@ impl Session {
     }
 
     pub async fn cmd_screenshot(&mut self, args: ScreenshotArgs) -> Res {
+        use std::io::Write;
         let png = self.screenshot_png().await?;
         let path = std::path::PathBuf::from(&args.path);
-        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| Fail::not_sent("write_failed", format!("{}: {e}", dir.display())))?;
+        let mut options = crate::paths::private_file();
+        options.write(true);
+        if args.create_new {
+            options.create_new(true);
+        } else {
+            if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(dir)
+                    .map_err(|e| Fail::not_sent("write_failed", format!("{}: {e}", dir.display())))?;
+            }
+            options.create(true).truncate(true);
         }
-        std::fs::write(&path, &png)
+        options
+            .open(&path)
+            .and_then(|mut file| file.write_all(&png))
             .map_err(|e| Fail::not_sent("write_failed", format!("{}: {e}", path.display())))?;
         Ok(fields! { "path": args.path, "bytes": png.len() })
     }
