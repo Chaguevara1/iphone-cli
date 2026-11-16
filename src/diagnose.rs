@@ -31,6 +31,8 @@ use crate::{
     reply::{Fail, Res},
 };
 
+mod redact;
+
 const CAPTURE_BYTES: usize = 256 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(6);
 
@@ -48,6 +50,9 @@ pub struct Args {
     /// Maximum run time of the iph command supplied after --.
     #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(1..=900))]
     pub command_timeout: u64,
+    /// Keep device ids, names, addresses and screen text in the file. Never attach it publicly.
+    #[arg(long)]
+    pub no_redact: bool,
     /// Optional iph command to run once and capture, e.g. -- read --full.
     #[arg(last = true, value_name = "IPH_COMMAND")]
     pub command: Vec<String>,
@@ -55,7 +60,11 @@ pub struct Args {
 
 struct Report {
     path: PathBuf,
+    /// Complete facts; findings are computed from these.
     data: Value,
+    /// None with --no-redact. Applied to every save, so the file never holds
+    /// identifiers even when collection is interrupted.
+    redactor: Option<redact::Redactor>,
 }
 
 impl Report {
@@ -66,14 +75,21 @@ impl Report {
             .create_new(true)
             .open(&path)
             .with_context(|| format!("cannot create {}", path.display()))?;
-        let report = Self {
+        let redaction = if args.no_redact {
+            json!({ "enabled": false, "warning": "Redaction is off: this file contains device ids and names, host and user names, network addresses and screen text. Do not attach it to a public issue." })
+        } else {
+            json!({ "enabled": true, "note": "Identifiers are replaced with stable placeholders such as <udid-1>; screen and typed text from the reproduction is reduced to its shape." })
+        };
+        let mut report = Self {
             path,
+            redactor: (!args.no_redact).then(redact::Redactor::new),
             data: json!({
                 "schema_version": 1, "status": "collecting", "started_at": crate::clock::now_utc(),
                 "started_unix_ms": events::now_ms(), "wifi_observation": args.wifi,
                 "observation_seconds": if args.wifi { args.duration } else { 5 },
                 "environment": { "iph_version": env!("CARGO_PKG_VERSION"), "build": crate::daemon::build_stamp(),
                     "os": std::env::consts::OS, "arch": std::env::consts::ARCH },
+                "redaction": redaction,
                 "snapshots": [], "discovery_timeline": [], "findings": [],
             }),
         };
@@ -81,12 +97,17 @@ impl Report {
         Ok(report)
     }
 
-    fn save(&self) -> Result<()> {
+    fn save(&mut self) -> Result<()> {
+        let redacted = self.redactor.as_mut().map(|redactor| {
+            redactor.harvest(&self.data);
+            redactor.apply(&self.data)
+        });
+        let data = redacted.as_ref().unwrap_or(&self.data);
         let mut file = paths::private_file()
             .write(true)
             .truncate(true)
             .open(&self.path)?;
-        serde_json::to_writer_pretty(&mut file, &self.data)?;
+        serde_json::to_writer_pretty(&mut file, data)?;
         file.write_all(b"\n")?;
         file.sync_data()?;
         Ok(())
@@ -254,12 +275,15 @@ async fn collect(report: &mut Report, args: &Args, flag: Option<String>) -> Resu
             ("scutil", &["--nc", "list"]),
             ("route", &["-n", "get", "default"]),
         ]
-    } else if cfg!(windows) {
+    } else if cfg!(windows) && args.no_redact {
         &[
             ("cmd", &["/C", "ver"]),
             ("ipconfig", &["/all"]),
             ("route", &["print"]),
         ]
+    } else if cfg!(windows) {
+        // /all adds MAC addresses, DHCPv6 DUIDs, DNS suffixes and DNS servers.
+        &[("cmd", &["/C", "ver"]), ("ipconfig", &[]), ("route", &["print"])]
     } else {
         &[("uname", &["-a"]), ("ip", &["address"]), ("ip", &["route"])]
     };
@@ -275,9 +299,11 @@ async fn collect(report: &mut Report, args: &Args, flag: Option<String>) -> Resu
     report.data["environment"]["host_commands"] = json!(host);
     report.save()?;
     if cfg!(target_os = "macos") {
+        // mDNSResponder's info logs include every DNS query name; keep only
+        // the phone-discovery service.
         report.data["system_logs"] = capture("log", &[
             "show", "--last", "10m", "--style", "compact", "--info", "--predicate",
-            "process == 'usbmuxd' OR process == 'mDNSResponder' OR process == 'AMPDevicesAgent'",
+            "process == 'usbmuxd' OR process == 'AMPDevicesAgent' OR (process == 'mDNSResponder' AND eventMessage CONTAINS[c] 'apple-mobdev2')",
         ].map(String::from), Duration::from_secs(10)).await;
     } else {
         report.data["system_logs"] = json!({ "status": "unavailable", "reason": "macOS unified logs are not available on this platform" });
