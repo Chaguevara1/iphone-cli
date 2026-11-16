@@ -1,0 +1,36 @@
+# Build and run the test suite on every push and pull request.
+# The tests need no iPhone; network use is limited to fetching crates.
+# This workflow never tags, releases or publishes anything.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            # Matches the upstream Windows verification (cargo test --release).
+            profile: --release
+          - os: macos-latest
+            profile: ""
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - run: rustc --version && cargo --version
+      - run: cargo test --locked ${{ matrix.profile }}

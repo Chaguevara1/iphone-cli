@@ -38,6 +38,9 @@ concurrency:
 
 jobs:
   plan:
+    # Release, push and publish only from the upstream repository. In forks
+    # every job is skipped, because the other jobs all need this one.
+    if: github.repository == 'HyunSeob/iphone-cli'
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.plan.outputs.sha }}
