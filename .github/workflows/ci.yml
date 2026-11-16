@@ -24,7 +24,9 @@ jobs:
           - os: windows-latest
             # Matches the upstream Windows verification (cargo test --release).
             profile: --release
-          - os: macos-latest
+          # Intel image: arm64 macOS runners were often not acquired at all
+          # ("capacity constraints"); the code is the same on both CPUs.
+          - os: macos-15-intel
             profile: ""
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
