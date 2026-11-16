@@ -7,6 +7,7 @@ body:
         Run `iph diagnose -- <failing iph command>` and attach the generated `.txt` file below.
         For USB working but Wi-Fi failing, start with USB connected, run `iph diagnose --wifi -- read`, and unplug when prompted.
         Commands after `--` run once. For example, `iph diagnose -- read --full`.
+        The report is redacted by default (device ids and names, user and host names, public addresses, screen and typed text are replaced). Redaction is pattern-based: open the file and check it before attaching it here, since issues are public. Do not attach a report made with `--no-redact`.
   - type: textarea
     id: reproduce
     attributes:
@@ -25,6 +26,6 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostic attachment / 진단 파일
-      description: Drag the generated iph-diagnostics-*.txt file here. If collection failed, paste its terminal output instead. If the phone was not detected, also include its model and iOS version.
+      description: Drag the generated iph-diagnostics-*.txt file here after reviewing it (made without --no-redact). If collection failed, paste its terminal output instead. If the phone was not detected, also include its model and iOS version.
     validations:
       required: true

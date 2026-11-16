@@ -6,7 +6,7 @@
 
 - **Direct Apple developer services** — connects over USB or Wi-Fi to the same accessibility and HID services Xcode uses, with no signing or test runner
 - **Accessibility tree, not screenshots** — reads structured UI elements cleanly, and runs multi-step flows in one call with a built-in QuickJS engine (`iph script`)
-- **Agent-ready** — CLI + MCP server (`iph mcp`) + safety-first outcomes (`done` / `not_sent` / `unknown`)
+- **Agent-ready** — CLI + MCP server (`iph mcp`) + safety-first outcomes (`done` / `not_sent` / `unknown` / `blocked`), and a [guard](#guard) that asks the person at the computer before pay, send or delete buttons are pressed
 - **Single native binary (macOS & Windows)** — no Python, Node.js, or Appium runtime; install one binary and target a real iPhone on **iOS 27+**
 
 한국어: [README.ko.md](README.ko.md)
@@ -51,6 +51,8 @@ iph setup                     # walks through what the phone needs
 
 It downloads the universal binary (Apple silicon and Intel) from the latest [release](https://github.com/HyunSeob/iphone-cli/releases), checks its checksum and puts it at `~/.local/bin/iph`. `IPH_INSTALL_DIR` picks another folder and `IPH_VERSION=v0.1.0` a specific version. On Windows, download `iph-windows-x86_64.zip` from the releases and put `iph.exe` in a folder on your PATH.
 
+> **Hardened build.** `install.sh`, the release binaries and the crates.io crate are upstream builds without the [guard](#guard), the MCP restrictions and the diagnostics redaction described here. To get this build, build from this repository (`cargo install --locked --path .` in a checkout of the `security-hardening` branch, below), or download the Windows `iph-windows-x86_64` artifact from this fork's CI run on `security-hardening`.
+
 - **Mac:** plug the phone in and tap Trust on it; that pairs it.
 - **Windows:** Apple's device service must be installed: the **Apple Devices** app from the Microsoft Store, or just the service with `winget install Apple.AppleMobileDeviceSupport`. Then plug the phone in and tap Trust.
 - **Developer disk image:** when the phone lacks it, `iph doctor` installs it. It uses Xcode's copy when the Mac has one, and otherwise fetches one once from the public [doronz88/DeveloperDiskImage](https://github.com/doronz88/DeveloperDiskImage) repository (about 18 MB, pinned commit and SHA-256). The iph repository contains no Apple files.
@@ -58,15 +60,15 @@ It downloads the universal binary (Apple silicon and Intel) from the latest [rel
 With Rust 1.88 or later, the crate on [crates.io](https://crates.io/crates/iphone-cli) installs the same `iph` (building it takes a few minutes; on Windows it needs Visual Studio Build Tools (C++)):
 
 ```sh
-cargo install iphone-cli      # ~/.cargo/bin/iph
+cargo install --locked iphone-cli      # ~/.cargo/bin/iph (upstream build)
 ```
 
-Or from a checkout:
+Or from a checkout (this is how to get the hardened build):
 
 ```sh
-git clone https://github.com/HyunSeob/iphone-cli
+git clone -b security-hardening https://github.com/Chaguevara1/iphone-cli
 cd iphone-cli
-cargo install --path .        # ~/.cargo/bin/iph
+cargo install --locked --path .        # ~/.cargo/bin/iph
 ```
 
 ## First-time setup
@@ -96,6 +98,8 @@ Pair by USB first, then keep the iPhone unlocked on the same LAN. The computer m
 ```sh
 iph doctor --fix-wifi
 ```
+
+`--fix-wifi` (also `iph setup --fix-wifi`) changes the phone's wireless settings, so it works only from a terminal; the MCP tool `iph_doctor` does not take it.
 
 If the phone is still not discovered, register its IP below. [Wireless setup details](docs/onboarding.md#wi-fi-연결) (Korean).
 
@@ -165,8 +169,9 @@ Scripts, MCP and batch also take an object: `{label, label_contains, label_regex
 | `done` | Ran to the end. With `ok: false`: everything was done, but what was looked for is not there (below) | 0, 1 with `ok: false` |
 | `not_sent` | Nothing reached the phone. Safe to try again | 1 |
 | `unknown` | Input may have reached the phone. **Do not resend**; read the screen | 2 |
+| `blocked` | The [guard](#guard) refused it: the dialog was cancelled or not answered, could not be shown, or a rule refuses it outright. Nothing was sent. **Do not retry or work around it**; tell the user | 3 |
 
-The exit code is 0 only with `ok: true`. `batch`, `script` and `run` follow the same table (1 when nothing went out). The one `ok: false` with `outcome: "done"` is `scroll --until` that did not find its target: the scrolls did go out, so it is not `not_sent`; the result has `error.code: "not_found"`, `found: false`, exit code 1. Trying again is safe, but the screen has moved by those scrolls.
+The exit code is 0 only with `ok: true`. `batch`, `script` and `run` follow the same table (1 when nothing went out, 3 when the guard stopped them before any input went out). The one `ok: false` with `outcome: "done"` is `scroll --until` that did not find its target: the scrolls did go out, so it is not `not_sent`; the result has `error.code: "not_found"`, `found: false`, exit code 1. Trying again is safe, but the screen has moved by those scrolls.
 
 The phone does not acknowledge touch reports. So results separate `sent` from `verified` (the screen was read again afterwards), and taps, typing and scrolls report `screen_changed`. When another app came to the front, `app_changed: true` is added.
 
@@ -203,11 +208,26 @@ restart_accessibility = true  # when the phone's accessibility daemon stops answ
 [script]
 timeout_secs = 300       # how long one script may run (840 at most)
 memory_mb = 64           # how much memory a script may hold
+
+[guard]                  # see Guard below; these are the defaults
+mode = "human"           # human: ask on this computer · deny: refuse without asking · off: no word checks
+categories = ["money", "send", "delete", "permission", "secret", "shortcut", "blind", "app"]
+add = []                 # extra words that are always guarded
+remove = []              # built-in words to stop guarding
+except = []              # phrases removed from a label before matching
+confirm_timeout_secs = 45  # how long the dialog waits (10 to 90); no answer = refused
+deny_cooldown_secs = 30  # after Cancel or a timeout, refuse guarded actions this long without asking
+only_apps = []           # when set: input and launch only in these bundle ids; an app iph cannot identify is refused
+confirm_apps = []        # every tap, typing, key, swipe and launch in these apps asks (category "app")
+block_apps = []          # never launch or send input to these apps
+
+[mcp]
+# screenshot_dir = "/Users/me/iph-shots"  # absolute folder for iph_screenshot; default <state dir>/screenshots
 ```
 
 Sending input needs the phone to be in "screen sharing" state (an indicator shows at the top of the phone). iph sets that up with the audio stream alone and does not take the screen video (`screen_video`). For an app that hides its content or warns while the screen is shared, set `input_idle_secs = 0`: the phone is then in that state only while input is being sent, at the price of 3 to 4 s more per input. Reading does not depend on screen sharing.
 
-iph does not judge what it presses. Pay, send and order buttons are pressed like any other, and input goes to whatever app is in front. What to press is up to the caller.
+The daemon and the MCP server read the config when they start: after editing it, run `iph stop` and restart the MCP server. An invalid `mode` or category, or an unknown key under `[guard]` or `[mcp]`, makes loading the config fail instead of falling back to a default.
 
 ### Do Not Disturb
 
@@ -216,6 +236,34 @@ iph does not judge what it presses. Pay, send and order buttons are pressed like
 - **How:** no service on the phone offers this, so iph does what a person does: pull Control Center down, hold the Focus control, pick the mode in the list, press Home twice. Control Center is therefore visible for a moment, and one switch usually takes 11 to 15 s, or 19 to 36 s when the resident process has just started.
 - **Needs:** the Focus control on Control Center's first page, and Control Center opening while an app is in front. For a phone in a language other than Korean or English, put the names the phone shows in `control` and `focus` under `[dnd]`.
 - **Not covered:** whatever comes through Do Not Disturb (alarms and timers, emergency alerts, people and apps allowed in the Do Not Disturb settings) and system pop-ups. Whether banners really stay away while Do Not Disturb is on was not tested separately (it relies on how iOS behaves).
+
+## Guard
+
+Before input goes out, iph checks what it would press. A risky action is sent only after the person at the computer agrees.
+
+| Category | Guarded |
+|---|---|
+| `money` | Pay, buy, checkout, order, transfer, subscribe, withdraw … (결제, 송금, 이체, 구매, 주문, 충전 …) |
+| `send` | Send, post, share, reply, submit, upload … (보내기, 전송, 게시, 공유, 답장 …); `type --submit` into anything but a search field |
+| `delete` | Delete, remove, erase, reset, unsubscribe … (삭제, 초기화, 탈퇴, 해지 …) |
+| `permission` | Allow, trust, install, accept (허용, 신뢰, 설치, 수락) |
+| `secret` | Typing into a password field (the dialog shows only the length) |
+| `shortcut` | Key combinations with cmd, ctrl or opt other than cmd+a/c/x/v/z and cmd+shift+z; Backspace or Delete with no text field focused; more than two lock-button presses in 10 s |
+| `blind` | A point tap or swipe sent while the screen cannot be read |
+| `app` | Every input to an app listed in `confirm_apps` |
+
+- **What is matched:** the label and identifier of the target (not its value), the element under the finger, and the button around a text or image target. A plain OK / 확인 / Continue counts when text on the same screen mentions a payment, transfer, order, deletion, sending or install ("송금하시겠습니까? [취소] [확인]"). A swipe that starts on such a control counts, and Return counts when a visible button would pay, delete or send (except in a search field). Built-in exceptions keep "Apple Pay", "Payment history", "Don't Allow", "허용 안 함" and similar from matching; Korean nouns such as "결제 내역" or "결제 완료" do not match either.
+- **`human` (default):** a dialog on this computer (a Windows message box, a macOS dialog) says what would be pressed. **Cancel is the default button**; OK allows that one action. No answer within `confirm_timeout_secs`, or no desktop to show the dialog on (SSH, a locked session, other platforms), is a refusal. After Cancel or a timeout, guarded actions are refused without asking for `deny_cooldown_secs`. After OK the target is located again; if it changed or moved, nothing is sent (`not_sent`, `target_changed`).
+- **`deny`:** guarded actions are refused without asking (`guard_denied`). Use it for unattended work.
+- **`off`:** no word checks and no dialog; only `only_apps` and `block_apps` apply.
+- **Refused without a dialog** (every mode but `off`): a `tap([…])` list that contains a guarded target (`guarded_in_sequence`; tap it on its own), and a third lock-button press within 10 s (`button_rate_limited`; fast presses start Emergency SOS). In every mode, `only_apps` and `block_apps` refuse with `app_not_allowed` and `app_blocked`. Hardware buttons are exempt from the app lists, so you can always leave an app.
+- **Result:** `ok: false`, `outcome: "blocked"`, exit code 3, `error.code` one of `confirm_denied`, `confirm_timeout`, `confirm_unavailable`, `confirm_cooldown`, `guard_denied`, `guarded_in_sequence`, `button_rate_limited`, `app_not_allowed`, `app_blocked`, with `error.hint` and `guard: {action, mode, categories, rules}` (and `element` for taps). In a script a blocked call ends the run even if it is caught; the run's outcome is `blocked` if no input had gone out, otherwise `unknown`. Event logs record only the mode, action, category and rule word, never screen text.
+
+**Limits.** The guard protects against an agent whose only way to the phone is iph (the MCP tools or the `iph` command). It does **not** stop an agent that has a general shell as the same OS user: such an agent can edit `config.toml` or click the dialog through UI automation. For unattended work, use `mode = "deny"`, or give such agents no shell. It matches words, so unlabeled or icon-only controls and wording in other languages may not be caught. It does not prevent reading: whatever is on the screen can still be read and passed on.
+
+### Screen text is untrusted
+
+Text on the phone (messages, web pages, notifications) is written by apps and other people and may contain instructions aimed at an agent. Only the user's messages are instructions. Over MCP, results of `iph_read`, `iph_find`, `iph_tap`, `iph_scroll`, `iph_type`, `iph_apps`, `iph_batch`, `iph_script` and `iph_run` begin with `"untrusted_screen_text": true`, and the server's instructions and input-tool descriptions say so (CLI output is unchanged). Invisible characters (zero-width spaces, bidi controls, Unicode tag characters) are removed from screen text. For read-only work, offer only the tools it needs: `iph mcp --tools read,find,screenshot`.
 
 ## Scripts
 
@@ -263,6 +311,7 @@ iph scripts                            # list saved scripts
 - **A failure is an exception.** A call that fails throws an `Error` carrying `e.code`, `e.outcome`, `e.hint` and `e.result` (the whole result object). Uncaught, it ends the script, and the result has `failed_call: {cmd, line, outcome}`, `reason: {code, message}` and `screen_summary`. Nothing is guessed. Use `try { … } catch (e) { … }` only around something that may legitimately be missing.
 - **The `outcome` of a script that stopped:** `unknown` if any input had gone out before it stopped (running it again would send that input again), and `not_sent` if none had. `inputs_sent` counts the calls that sent input.
 - **Nothing follows `unknown`.** After a call whose input may or may not have reached the phone (`outcome: "unknown"`) the script is ended there. Catching the error does not help: no further call reaches the phone.
+- **Nothing follows `blocked` either.** A call the [guard](#guard) refused ends the script the same way, even if caught. The run's outcome is `blocked` when no input had gone out, otherwise `unknown`.
 - Any call takes `hint: "…"` among its options: what to tell the person if the script stops at that call ("look at the phone" on a `waitFor` that sits out Face ID).
 - After `launch`, that app must stay in front. If another app comes up, input calls and `readField` / `readList` stop with `unexpected_app`.
 - **`readList`:** `columns` is `{name: {take, regex, selector}}`, or `{name: {value: "…"}}` for the same value on every row. `group: {selector, regex, as}` turns headings between rows (a date line) into a column of the rows under them, and `stop_below: N` stops once a heading's number falls below N. `key: "column"` says two rows are the same row when that column agrees; use it for lists whose rows change while they are read (a clock, time left). Without it the whole row has to agree.
@@ -305,6 +354,12 @@ ln -s "$PWD/skills/iph" ~/.codex/skills/iph                     # Codex
 
 Tools: `iph_connect`, `iph_read`, `iph_find`, `iph_tap`, `iph_swipe`, `iph_scroll`, `iph_type`, `iph_key`, `iph_button`, `iph_launch`, `iph_apps`, `iph_screenshot`, `iph_batch`, `iph_script`, `iph_run`, `iph_scripts`, `iph_doctor`, `iph_dnd`. Arguments and results are the same as the CLI's. `iph_script` takes `code` (JavaScript) and `args`; `iph_run` takes `name` and `args`. Guidance for agents: [skills/iph/SKILL.md](skills/iph/SKILL.md).
 
+Differences from the CLI:
+
+- Results that carry screen text begin with `"untrusted_screen_text": true` (see [Screen text is untrusted](#screen-text-is-untrusted)), and input-tool descriptions say how the guard acts in the configured mode.
+- `iph_screenshot` writes only into the screenshot folder: `[mcp] screenshot_dir` (absolute), or `<state dir>/screenshots` by default (`~/Library/Application Support/iph/screenshots` on macOS, `%LOCALAPPDATA%\iph\screenshots` on Windows). `path` is optional: a file name such as `shot.png` (letters, digits, `.` `_` `-`, ending in `.png`) or an absolute path inside that folder; left out, a new timestamped name is used. An existing file is never overwritten.
+- `iph_doctor` does not change Wi-Fi flags; `fix_wifi: true` is refused. Ask the user to run `iph setup --fix-wifi` or `iph doctor --fix-wifi` in a terminal.
+
 ## Speed
 
 iPhone 15 Pro Max, iOS 27.0.1, Wi-Fi, with the resident process connected (2026-11-11).
@@ -338,6 +393,8 @@ A reading takes more than a second because of the phone: after a request it wait
 
 One `iph` call is one request over a Unix socket (`~/Library/Application Support/iph/<udid>.sock`) to a resident process (`iph daemon`, started by the first call). It keeps the tunnel, the accessibility subscription and the touch-input session open per phone and handles requests one at a time. It exits after 30 minutes without requests.
 
+On Windows the resident process listens on a named pipe (`\\.\pipe\iph-<udid>`) that only its owner, SYSTEM and Administrators may open. If the daemon was started from an elevated terminal (Run as administrator), iph in a normal terminal cannot connect to it: run `iph stop` in the elevated terminal, then use iph from a normal terminal, which starts a new daemon.
+
 ```
 iph (CLI) ─┐
 iph mcp  ──┼─ unix socket ─ iph daemon ─ lockdown → CoreDeviceProxy → userspace TCP tunnel → RSD
@@ -358,7 +415,9 @@ iph diagnose -- read --full        # run the failing iph command once and captur
 iph diagnose --wifi -- read        # start with USB connected; unplug when prompted
 ```
 
-Attach the generated `iph-diagnostics-*.txt` to a [GitHub issue](https://github.com/HyunSeob/iphone-cli/issues/new/choose), along with the reproduction steps and expected/actual behavior. The file contains readable JSON: versions and network state, raw and parsed usbmuxd lists, phone facts and wireless settings, pairing/connection/tunnel errors with timings, Bonjour advertisements and endpoint TCP probes, recent connection events and daemon logs, and related macOS system logs. UDIDs, addresses, command arguments and captured output are retained for debugging. Pairing records and private keys are not collected.
+Attach the generated `iph-diagnostics-*.txt` to a [GitHub issue](https://github.com/HyunSeob/iphone-cli/issues/new/choose), along with the reproduction steps and expected/actual behavior. The file contains readable JSON: versions and network state, raw and parsed usbmuxd lists, phone facts and wireless settings, pairing/connection/tunnel errors with timings, Bonjour advertisements and endpoint TCP probes, recent connection events and daemon logs, and related macOS system logs. Pairing records and private keys are not collected.
+
+**The report is redacted by default.** Before every save, iph replaces UDIDs and serial numbers (`<udid-1>` …), the phone's own name (`<device-name>`), your home folder (`~`), user, computer and domain names (`<user>`, `<host>`, `<domain>`), MAC addresses and DHCPv6 DUIDs, public IPv4 and global or unique-local IPv6 addresses (private, loopback and link-local IPv4 stay; link-local IPv6 keeps only its prefix and scope), email addresses, socket address bytes and the bundle ids in `*_apps` config lists. Screen and typed text in the reproduced command's output is reduced to its shape (types and lengths; `ok`, `outcome`, `error` and timings stay), and its arguments keep only flags and the subcommand. Placeholders are stable within one report. On Windows `ipconfig` runs without `/all`, and on macOS the system log is limited to usbmuxd, AMPDevicesAgent and mDNSResponder lines about `apple-mobdev2`. `--no-redact` keeps everything and marks the report `redaction.enabled: false`; never attach such a file publicly. Redaction is pattern-based, so **review the file before attaching it anywhere public**.
 
 `--wifi` records USB facts first, then observes discovery for 30 seconds while you unplug the cable. `--duration 60` changes that observation window. The phone selected during the USB baseline remains selected after it disappears; use `--udid` when several phones are attached. Bonjour services may belong to other devices, so the report preserves the advertisements without assuming their identity. On Windows, the Bonjour checks use `dns-sd` if it is installed; missing tools and failed checks are recorded and do not prevent the attachment.
 
