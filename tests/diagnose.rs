@@ -228,11 +228,13 @@ fn wifi_observation_preserves_usb_facts_after_device_disappears() {
         "--wifi",
         "--duration",
         "2",
+        "--no-redact",
         "-o",
         "wifi.txt",
         "--",
         "devices",
     ]);
+    assert_eq!(report["redaction"]["enabled"], false);
     assert_eq!(report["selected_udid"], PHONE, "{}", report["snapshots"]);
     assert_eq!(
         report["snapshots"][0]["probes"][0]["values"]["EnableWifiConnections"],
@@ -257,6 +259,41 @@ fn wifi_observation_preserves_usb_facts_after_device_disappears() {
             .unwrap()
             .contains(&json!(PHONE))
     );
+}
+
+#[test]
+fn default_report_hides_device_identifiers() {
+    let fixture = Fixture::new(true, false, true);
+    let (response, report) = fixture.run(&[
+        "diagnose",
+        "--wifi",
+        "--duration",
+        "2",
+        "-o",
+        "redacted.txt",
+        "--",
+        "devices",
+    ]);
+    let file = std::fs::read_to_string(response["report"].as_str().unwrap()).unwrap();
+    assert!(!file.contains(PHONE), "{file}");
+    assert_eq!(report["redaction"]["enabled"], true);
+    assert_eq!(report["selected_udid"], "<udid-1>", "{}", report["snapshots"]);
+    // Facts that explain a failure survive redaction.
+    assert_eq!(
+        report["snapshots"][0]["probes"][0]["values"]["EnableWifiConnections"],
+        false
+    );
+    assert_eq!(
+        report["snapshots"][0]["probes"][0]["values"]["DeviceName"],
+        "<device-name>"
+    );
+    assert!(
+        report["reproduction"]["args"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("<udid-1>"))
+    );
+    assert!(report.to_string().contains("EnableWifiConnections=false"));
 }
 
 #[test]
