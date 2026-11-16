@@ -50,6 +50,9 @@ static DUID: LazyLock<Regex> = LazyLock::new(|| pattern(r"(?i)[0-9a-f]{2}(?:-[0-
 static MAC: LazyLock<Regex> = LazyLock::new(|| {
     pattern(r"(?i)[0-9a-f]{2}(?::[0-9a-f]{2}){5}|[0-9a-f]{2}(?:-[0-9a-f]{2}){5}")
 });
+/// Windows `route print` interface list: `12...00 15 5d 01 02 03 ......Name`.
+static MAC_SPACED: LazyLock<Regex> =
+    LazyLock::new(|| pattern(r"(?i)[0-9a-f]{2}(?: [0-9a-f]{2}){5}"));
 static UDID_MODERN: LazyLock<Regex> = LazyLock::new(|| pattern(r"(?i)[0-9a-f]{8}-[0-9a-f]{16}"));
 static UDID_LEGACY: LazyLock<Regex> = LazyLock::new(|| pattern(r"(?i)[0-9a-f]{40}"));
 static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
@@ -360,6 +363,12 @@ impl Redactor {
             }
             Some(self.pseudonym("mac", &m.replace('-', ":")))
         });
+        text = replace_matches(&text, &MAC_SPACED, |m, before, after| {
+            if !spaced_mac_bounded(before, after) {
+                return None;
+            }
+            Some(self.pseudonym("mac", &m.replace(' ', ":")))
+        });
         for re in [&*UDID_MODERN, &*UDID_LEGACY] {
             text = replace_matches(&text, re, |m, before, after| {
                 if !separated(before, after, &['-']) {
@@ -493,6 +502,22 @@ fn separated(before: &str, after: &str, seps: &[char]) -> bool {
     }
 }
 
+/// Exactly six space-separated pairs: the run must not continue on either side
+/// with a space or an alphanumeric character (a hexdump line has 16 pairs).
+/// `route print` puts `...` before the MAC and ` ......` after it.
+fn spaced_mac_bounded(before: &str, after: &str) -> bool {
+    let free = |c: char| !c.is_alphanumeric() && c != ' ';
+    if before.chars().next_back().is_some_and(|c| !free(c)) {
+        return false;
+    }
+    let mut next = after.chars();
+    match next.next() {
+        None => true,
+        Some(' ') => next.next() == Some('.'),
+        Some(c) => free(c),
+    }
+}
+
 #[cfg(unix)]
 fn hostname() -> Option<String> {
     let mut buf = [0u8; 256];
@@ -563,6 +588,29 @@ mod tests {
             r.text("DUID: 00-01-00-01-2A-3B-4C-5D-A4-83-E7-12-34-56"),
             "DUID: <duid>"
         );
+    }
+
+    #[test]
+    fn route_print_spaced_mac_shares_the_mac_map() {
+        let mut r = Redactor::default();
+        assert_eq!(r.text("00-15-5D-01-02-03"), "<mac-1>");
+        assert_eq!(
+            r.text("  12...00 15 5d 01 02 03 ......Hyper-V Virtual Ethernet Adapter"),
+            "  12...<mac-1> ......Hyper-V Virtual Ethernet Adapter"
+        );
+        assert_eq!(r.text("00 15 5d 01 02 03"), "<mac-1>");
+        assert_eq!(
+            r.text("  1...........................Software Loopback Interface 1"),
+            "  1...........................Software Loopback Interface 1"
+        );
+        // Longer runs of spaced pairs (hexdumps) are not MACs.
+        for dump in [
+            "00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f",
+            "00000010  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f  ................",
+            "00 01 02 03 04 05 06",
+        ] {
+            assert_eq!(r.text(dump), dump);
+        }
     }
 
     #[test]
