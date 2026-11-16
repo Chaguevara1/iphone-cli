@@ -38,7 +38,7 @@ $ iph run settings-version
 |---|---|
 | 호스트 | macOS, Windows 10 · 11 (x64) |
 | 기기 | 실제 아이폰, **iOS 27 이상** (검증은 **iPhone 15 Pro Max · iOS 27.0.1 한 대**에서만 했습니다). 터치 · 입력이 폰의 화면 공유 서비스(`com.apple.coredevice.displayservice`, iOS 27부터)를 거치기 때문에 iOS 26 이하에서는 입력이 안 될 것으로 봅니다 (돌려 보지는 않았습니다) |
-| 연결 | USB 또는 같은 Wi-Fi (맥은 Wi-Fi로, 윈도는 USB로만 검증) |
+| 연결 | USB 또는 같은 LAN (PC는 유선이어도 됨. 윈도 USB·Wi-Fi 검증) |
 | 범위 밖 | 시뮬레이터, 안드로이드, Linux 호스트, 가로 화면 |
 
 윈도는 iPhone19,4 · iOS 27.2 한 대를 USB로 꽂아 `doctor` · 읽기 · 터치 · 스크립트를 확인했습니다.
@@ -94,15 +94,27 @@ cargo install --path .        # ~/.cargo/bin/iph
 
 ### Wi-Fi 준비와 문제 해결
 
-같은 Wi-Fi에 있는 것만으로는 충분하지 않습니다. 지원되는 기기는 lockdown의 `com.apple.mobile.wireless_lockdown` 도메인에서 `EnableWifiConnections`와 `EnableWifiDebugging`이 **모두 `true`**여야 무선으로 발견될 수 있습니다. 하나라도 꺼져 있으면 Bonjour의 `_apple-mobdev2._tcp.local.` 서비스를 광고하지 않아, 같은 대역에서도 usbmuxd에 `Network` 연결이 나타나지 않을 수 있습니다.
+먼저 USB로 연결해 컴퓨터를 신뢰하고, 아이폰의 잠금을 푼 채 같은 LAN에 연결하세요. 컴퓨터는 유선 LAN을 써도 됩니다. 무선 연결 설정을 켜려면 USB 연결 상태에서 실행하세요:
 
-- USB로 연결하고 잠금 해제·컴퓨터 신뢰를 확인한 뒤 `iph setup` 또는 `iph doctor`를 실행하면 `SupportsWifi`, `SupportsWifiSyncing`과 두 활성화 플래그를 읽습니다. 두 명령 모두 기본 실행에서는 무선 플래그를 변경하지 않습니다.
-- 무선 활성화를 명시적으로 요청하려면 `iph setup --fix-wifi` 또는 `iph doctor --fix-wifi`를 실행하세요 (MCP `iph_doctor`: `fix_wifi: true`). 지원 플래그 중 하나가 `true`이면, 명시적으로 `false`인 활성화 플래그만 `true`로 설정하고 다시 읽어 확인합니다. 미지원이거나 값을 확인할 수 없으면 변경하지 않습니다. doctor는 사람이 볼 때 `--human`을 붙이세요. setup은 기존의 대화형 안내 출력을 유지합니다.
-- 플래그를 켠 뒤 **같은 폰의** usbmuxd `Network` 연결이 나타나는지 최대 4초 확인합니다. 확인된 플래그 변경은 `checks[].auto_fixed`에 표시하고, 연결이 나타나지 않으면 `wifi`는 경고로 남습니다. Wi-Fi는 권장 항목이므로 USB 준비 완료를 막지 않습니다.
-- 플래그가 꺼져 있으면 doctor가 해당 이름을 알려 줍니다. 직접 설정하려면 Finder → iPhone 선택 → 'Wi-Fi에 있을 때 이 iPhone 보기'(윈도: Apple 기기 앱), Xcode → Devices and Simulators → 'Connect via network'를 확인하세요. 자동 쓰기가 거부되거나 재확인에 실패하면 `detail`에 키와 원인이 나옵니다. 신뢰·잠금 상태를 확인해 다시 시도하거나 위 설정을 사용하세요.
-- 두 플래그가 켜져 있는데 `Network`가 없다면 같은 Wi-Fi 대역인지, AP/클라이언트 격리가 꺼져 있는지, mDNS/Bonjour(`_apple-mobdev2._tcp.local.`)가 차단되는지 확인하세요. 설정 직후에는 잠시 뒤 doctor를 다시 실행하세요. 플래그 읽기 실패나 usbmuxd 조회 실패는 꺼진 플래그·네트워크 문제로 단정하지 않고 따로 표시합니다.
+```sh
+iph doctor --fix-wifi
+```
+
+그래도 폰이 검색되지 않으면 아래 방법으로 IP를 등록할 수 있습니다. [무선 설정 상세](docs/onboarding.md#wi-fi-연결).
 
 **알림 배너는 화면 위쪽 탭을 가로챕니다.** 배너는 화면 위쪽을 덮고 접근성 트리에는 나오지 않습니다. 그때 화면 위쪽을 누르면 배너가 눌려 다른 앱이 열립니다 (만드는 동안 실제로 한 번 겪었습니다). 오래 맡길 때는 `iph dnd on`으로 방해금지 모드를 켜 두고, 끝나면 `iph dnd off`로 되돌리세요. 자세한 내용은 아래 [방해금지 모드](#방해금지-모드).
+
+### 자동 검색에 실패할 때 IP 직접 연결
+
+USB로 신뢰한 폰이 검색되지 않으면 설정 → Wi-Fi → 네트워크 정보의 IP를 등록하세요:
+
+```sh
+iph devices                                      # USB 연결 상태에서 UDID 확인
+iph --udid <UDID> connect --ip <아이폰-IP>          # USB를 뺀 뒤 실행
+iph --udid <UDID> read
+```
+
+Apple 기기 연결 서비스가 필요합니다. CLI·MCP·스크립트는 선택한 UDID의 저장 주소를 공유하며, IP가 바뀌면 다시 등록하세요. [직접 연결 상세](docs/onboarding.md#ip-직접-연결).
 
 ## 명령
 
@@ -110,6 +122,7 @@ cargo install --path .        # ~/.cargo/bin/iph
 
 | 명령 | 하는 일 |
 |---|---|
+| `iph connect --ip <IP>` | 선택한 신뢰 기기의 IP를 검증하고 저장 |
 | `iph devices` | 연결된 폰, iOS 버전, 연결 방식, 준비 상태 |
 | `iph setup` / `iph doctor` | 준비 · 점검 |
 | `iph read [--app] [--all] [--full] [--raw] [--max-age ms]` | 화면 요소 목록. `--all` 화면 밖 포함, `--full` 식별자 포함(약 0.5초 더), `--raw` 번호 붙은 속성 전부 |
@@ -293,7 +306,7 @@ ln -s "$PWD/skills/iph" ~/.claude/skills/iph                    # Claude Code
 ln -s "$PWD/skills/iph" ~/.codex/skills/iph                     # Codex
 ```
 
-도구: `iph_read`, `iph_find`, `iph_tap`, `iph_swipe`, `iph_scroll`, `iph_type`, `iph_key`, `iph_button`, `iph_launch`, `iph_apps`, `iph_screenshot`, `iph_batch`, `iph_script`, `iph_run`, `iph_scripts`, `iph_doctor`, `iph_dnd`. 인자와 결과는 CLI와 같습니다. `iph_script`는 `code`(자바스크립트)와 `args`를, `iph_run`은 `name`과 `args`를 받습니다. 에이전트용 안내는 [skills/iph/SKILL.md](skills/iph/SKILL.md)에 있습니다.
+도구: `iph_connect`, `iph_read`, `iph_find`, `iph_tap`, `iph_swipe`, `iph_scroll`, `iph_type`, `iph_key`, `iph_button`, `iph_launch`, `iph_apps`, `iph_screenshot`, `iph_batch`, `iph_script`, `iph_run`, `iph_scripts`, `iph_doctor`, `iph_dnd`. 인자와 결과는 CLI와 같습니다. `iph_script`는 `code`(자바스크립트)와 `args`를, `iph_run`은 `name`과 `args`를 받습니다. 에이전트용 안내는 [skills/iph/SKILL.md](skills/iph/SKILL.md)에 있습니다.
 
 ## 속도
 
